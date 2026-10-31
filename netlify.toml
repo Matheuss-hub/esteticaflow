@@ -2,5 +2,7 @@
   command = "npm run build"
   publish = ".next"
 
-[secrets_scanning]
-  omit_keys = ["NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_URL"]
+[build.environment]
+  # Supabase URL and anon key are public by design (inlined into the client bundle by Next.js),
+  # so exclude them from Netlify's secrets scanning.
+  SECRETS_SCAN_OMIT_KEYS = "NEXT_PUBLIC_SUPABASE_ANON_KEY,NEXT_PUBLIC_SUPABASE_URL"
