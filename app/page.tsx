@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowDownRight, ArrowRight, CalendarCheck2, Clock3, PackageCheck, Sparkles } from "lucide-react";
+import { ArrowDownRight, ArrowRight, CalendarCheck2, CalendarPlus, Clock3, PackageCheck, Sparkles } from "lucide-react";
 import { AppointmentList } from "@/components/appointment-list";
 import { EmptyState, ErrorNotice, PageHeading, Panel } from "@/components/ui";
-import { appointmentDate, dateKey, numeric, Row, text } from "@/lib/data";
-import { CLINICA_ID, supabase } from "@/lib/supabase";
+import { appointmentDate, dateKey, formatDateLong, numeric, Row, text } from "@/lib/data";
+import { loadDashboardData } from "@/app/actions/data";
 
 export default function DashboardPage() {
   const [appointments, setAppointments] = useState<Row[]>([]);
@@ -18,19 +18,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     async function load() {
-      const results = await Promise.all([
-        supabase.from("agendamentos").select("*").eq("clinica_id", CLINICA_ID),
-        supabase.from("pacientes").select("*").eq("clinica_id", CLINICA_ID),
-        supabase.from("servicos").select("*").eq("clinica_id", CLINICA_ID),
-        supabase.from("pacotes").select("*").eq("clinica_id", CLINICA_ID),
-      ]);
-      const failed = results.find((result) => result.error);
-      if (failed?.error) setError(failed.error.message);
-      else {
-        setAppointments((results[0].data ?? []) as Row[]);
-        setPatients((results[1].data ?? []) as Row[]);
-        setServices((results[2].data ?? []) as Row[]);
-        setPackages((results[3].data ?? []) as Row[]);
+      try {
+        const result = await loadDashboardData();
+        if ("error" in result) setError(result.error ?? "Não foi possível carregar o painel.");
+        else {
+          setAppointments(result.appointments as Row[]);
+          setPatients(result.patients as Row[]);
+          setServices(result.services as Row[]);
+          setPackages(result.packages as Row[]);
+        }
+      } catch {
+        setError("Não foi possível carregar o painel. Tente novamente.");
       }
       setLoading(false);
     }
@@ -38,6 +36,7 @@ export default function DashboardPage() {
   }, []);
 
   const todayKey = dateKey(new Date());
+  const currentMonth = todayKey.slice(0, 7);
   const todayAppointments = appointments.filter((item) => {
     const date = appointmentDate(item);
     return date ? dateKey(date) === todayKey : false;
@@ -45,13 +44,16 @@ export default function DashboardPage() {
   const monthAppointments = appointments.filter((item) => {
     const date = appointmentDate(item);
     const status = text(item, "status").toLowerCase();
-    return date && date.getMonth() === new Date().getMonth() && date.getFullYear() === new Date().getFullYear() &&
+    return date && dateKey(date).slice(0, 7) === currentMonth &&
       (status === "realizado" || status === "faltou");
   });
   const attendanceRate = monthAppointments.length
     ? Math.round((monthAppointments.filter((item) => text(item, "status").toLowerCase() === "realizado").length / monthAppointments.length) * 100)
     : 0;
-  const endingPackages = packages.filter((item) => numeric(item, "sessoes_usadas") >= numeric(item, "total") - 2);
+  const endingPackages = packages.filter((item) => {
+    const remaining = numeric(item, "total_sessoes") - numeric(item, "sessoes_usadas");
+    return text(item, "status") === "ativo" && remaining > 0 && remaining <= 2;
+  });
 
   const patientNames = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "nome", "name")])), [patients]);
   const patientPhones = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "whatsapp", "telefone")])), [patients]);
@@ -60,14 +62,13 @@ export default function DashboardPage() {
   return (
     <>
       <PageHeading
-        eyebrow="Sábado, seu espaço floresce"
+        eyebrow="Sua clínica em foco"
         title="Visão geral"
-        description={new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long" })}
-        action={
-          <Link href="/agenda" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700">
-            Abrir agenda <ArrowRight size={16} />
-          </Link>
-        }
+        description={formatDateLong(new Date(), "EEEE, d 'de' MMMM 'de' yyyy")}
+        action={<div className="flex flex-wrap gap-2">
+          <Link href="/agenda" className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50">Abrir agenda <ArrowRight size={16} /></Link>
+          <Link href="/agenda/novo" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"><CalendarPlus size={16} /> Novo agendamento</Link>
+        </div>}
       />
 
       {error && <div className="mb-6"><ErrorNotice message={error} /></div>}
@@ -138,7 +139,7 @@ export default function DashboardPage() {
               {endingPackages.slice(0, 5).map((item, index) => {
                 const patient = patientNames.get(text(item, "paciente_id")) || "Paciente";
                 const used = numeric(item, "sessoes_usadas");
-                const total = numeric(item, "total");
+                const total = numeric(item, "total_sessoes");
                 const service = serviceNames.get(text(item, "servico_id")) || "Tratamento";
                 return (
                   <div key={text(item, "id") || index} className="rounded-xl border border-rose-50 p-3.5">

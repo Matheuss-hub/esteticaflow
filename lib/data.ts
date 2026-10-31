@@ -1,4 +1,9 @@
+import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { ptBR } from "date-fns/locale";
+
 export type Row = Record<string, unknown>;
+
+const TIME_ZONE = "America/Sao_Paulo";
 
 export function text(row: Row, ...keys: string[]): string {
   for (const key of keys) {
@@ -36,34 +41,36 @@ export function appointmentDate(row: Row): Date | null {
 
   const time = text(row, "horario", "hora", "horario_inicio", "time");
   const value = raw.includes("T") || !time ? raw : `${raw}T${time}`;
-  const parsed = new Date(value);
+  const hasTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value);
+  const parsed = hasTimezone ? new Date(value) : fromZonedTime(value, TIME_ZONE);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export function dateKey(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatInTimeZone(date, TIME_ZONE, "yyyy-MM-dd");
 }
 
 export function dateOnly(value: string): Date | null {
   if (!value) return null;
-  const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
+  const parsed = fromZonedTime(`${value.slice(0, 10)}T12:00:00`, TIME_ZONE);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export function formatTime(row: Row): string {
   const date = appointmentDate(row);
   return date
-    ? date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })
+    ? formatInTimeZone(date, TIME_ZONE, "HH:mm")
     : "--:--";
 }
 
 export function formatDate(value: Date | null): string {
   return value
-    ? value.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+    ? formatInTimeZone(value, TIME_ZONE, "dd/MM/yyyy", { locale: ptBR })
     : "Sem data";
+}
+
+export function formatDateLong(value: Date, pattern = "EEEE, d 'de' MMMM"): string {
+  return formatInTimeZone(value, TIME_ZONE, pattern, { locale: ptBR });
 }
 
 export function statusLabel(status: string): string {
@@ -77,18 +84,14 @@ export function statusLabel(status: string): string {
 }
 
 export function whatsappLink(phone: string, message: string): string {
-  const digits = phone.replace(/\D/g, "").replace(/^55/, "");
+  let digits = phone.replace(/\D/g, "");
+  while (digits.length > 11 && digits.startsWith("55")) digits = digits.slice(2);
   return `https://wa.me/55${digits}?text=${encodeURIComponent(message)}`;
 }
 
 export function appointmentMessage(patient: string, service: string, date: Date | null): string {
   const when = date
-    ? date.toLocaleString("pt-BR", {
-        day: "2-digit",
-        month: "long",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
+    ? formatInTimeZone(date, TIME_ZONE, "dd/MM/yyyy 'às' HH:mm", { locale: ptBR })
     : "em breve";
   return `Oi, ${patient}! 💕 Passando para confirmar seu horário de ${service || "atendimento"} no EsteticaFlow, ${when}. Podemos confirmar?`;
 }
