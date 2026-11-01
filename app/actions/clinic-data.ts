@@ -8,6 +8,15 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 type ActionError = { error: string };
 type ActionSuccess = { success: string; id?: string };
 
+function rpcErrorMessage(message: string): string | undefined {
+  if (message.includes("CLINICA_SEM_ACESSO")) return "Você não tem acesso a esta clínica.";
+  if (message.includes("PACIENTE_DUPLICADO")) return "Já existe uma paciente com este WhatsApp nesta clínica.";
+  if (message.includes("CONFLITO_DE_HORARIO")) return "Este profissional já tem outro atendimento nesse horário.";
+  if (message.includes("PACOTE_SEM_SESSOES")) return "O pacote selecionado não tem sessões disponíveis ou está vencido.";
+  if (message.includes("EDICAO_DE_REALIZADO_NAO_PERMITIDA")) return "Um atendimento realizado não pode ser editado.";
+  return undefined;
+}
+
 async function clinicContext() {
   try {
     const clinic = await getClinicaAtual();
@@ -28,7 +37,7 @@ export async function loadPatientsPageData() {
   const supabase = createSupabaseServerClient();
   const [patients, appointments] = await Promise.all([
     supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", context.clinic.clinicaId),
-    supabase.from("agendamentos").select("id, paciente_id, data_hora, status").eq("id_clinico", context.clinic.clinicaId),
+    supabase.from("agendamentos").select("id, paciente_id, data_hora, status").eq("clinica_id", context.clinic.clinicaId),
   ]);
   if (patients.error || appointments.error) return { error: "Não foi possível carregar os pacientes." };
   return { patients: patients.data ?? [], appointments: appointments.data ?? [] };
@@ -80,7 +89,8 @@ export async function savePatientAction(formData: FormData): Promise<ActionError
     p_consentimento_whatsapp: parsed.data.consentimento_whatsapp === "on" || parsed.data.consentimento_whatsapp === "true",
   });
   if (error || !data) {
-    if (error?.message.includes("PACIENTE_DUPLICADO")) return { error: "Já existe uma paciente com este WhatsApp nesta clínica." };
+    const message = error && rpcErrorMessage(error.message);
+    if (message) return { error: message };
     return { error: "Não foi possível salvar a paciente. Confira os dados e tente novamente." };
   }
   revalidatePath("/pacientes");
@@ -97,7 +107,7 @@ export async function loadPatientDetailAction(patientId: string) {
   const clinicId = context.clinic.clinicaId;
   const [patient, appointments, packages, services] = await Promise.all([
     supabase.from("pacientes").select("*").eq("clinica_id", clinicId).eq("id", id.data).maybeSingle(),
-    supabase.from("agendamentos").select("*").eq("id_clinico", clinicId).eq("paciente_id", id.data).order("data_hora", { ascending: false }),
+    supabase.from("agendamentos").select("*").eq("clinica_id", clinicId).eq("paciente_id", id.data).order("data_hora", { ascending: false }),
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId).eq("paciente_id", id.data),
     supabase.from("servicos").select("id, nome").eq("clinica_id", clinicId),
   ]);
@@ -113,10 +123,10 @@ export async function loadAppointmentFormData(appointmentId?: string) {
   const clinicId = context.clinic.clinicaId;
   const [patients, services, packages, members, appointment] = await Promise.all([
     supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId).order("nome"),
-    supabase.from("servicos").select("id, nome, duracao_minutos").eq("clinica_id", clinicId).order("nome"),
+    supabase.from("servicos").select("id, nome, duracao_min").eq("clinica_id", clinicId).order("nome"),
     supabase.from("pacotes").select("id, nome, paciente_id, servico_id, total_sessoes, sessoes_usadas, status, validade").eq("clinica_id", clinicId),
     supabase.from("clinica_membros").select("user_id, nome, role").eq("clinica_id", clinicId),
-    appointmentId ? supabase.from("agendamentos").select("*").eq("id_clinico", clinicId).eq("id", appointmentId).maybeSingle() : Promise.resolve({ data: null, error: null }),
+    appointmentId ? supabase.from("agendamentos").select("*").eq("clinica_id", clinicId).eq("id", appointmentId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   if (patients.error || services.error || packages.error || members.error || appointment.error) return { error: "Não foi possível carregar os dados do formulário." };
   return { patients: patients.data ?? [], services: services.data ?? [], packages: packages.data ?? [], members: members.data ?? [], appointment: appointment.data };
@@ -157,10 +167,8 @@ export async function saveAppointmentAction(formData: FormData): Promise<ActionE
     p_observacoes: parsed.data.observacoes,
   });
   if (error || !data) {
-    const message = error?.message ?? "";
-    if (message.includes("CONFLITO_DE_HORARIO")) return { error: "Este profissional já tem outro atendimento nesse horário." };
-    if (message.includes("PACOTE_SEM_SESSOES")) return { error: "O pacote selecionado não tem sessões disponíveis ou está vencido." };
-    if (message.includes("EDICAO_DE_REALIZADO_NAO_PERMITIDA")) return { error: "Um atendimento realizado não pode ser editado." };
+    const message = error && rpcErrorMessage(error.message);
+    if (message) return { error: message };
     return { error: "Não foi possível salvar o agendamento. Confira os dados e tente novamente." };
   }
   revalidatePath("/agenda");
@@ -184,7 +192,8 @@ export async function changeAppointmentStatusAction(formData: FormData): Promise
     p_status: parsed.data.status,
   });
   if (error) {
-    if (error.message.includes("PACOTE_SEM_SESSOES")) return { error: "O pacote não tem sessões disponíveis para concluir este atendimento." };
+    const message = rpcErrorMessage(error.message);
+    if (message) return { error: message };
     return { error: "Não foi possível atualizar o status do agendamento." };
   }
   revalidatePath("/agenda");
@@ -268,7 +277,7 @@ export async function loadPackageDetailAction(packageId: string) {
   const clinicId = context.clinic.clinicaId;
   const [pack, appointments, patient, service] = await Promise.all([
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId).eq("id", id.data).maybeSingle(),
-    supabase.from("agendamentos").select("*").eq("id_clinico", clinicId).eq("pacote_id", id.data).order("data_hora", { ascending: true }),
+    supabase.from("agendamentos").select("*").eq("clinica_id", clinicId).eq("pacote_id", id.data).order("data_hora", { ascending: true }),
     supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId),
     supabase.from("servicos").select("id, nome").eq("clinica_id", clinicId),
   ]);

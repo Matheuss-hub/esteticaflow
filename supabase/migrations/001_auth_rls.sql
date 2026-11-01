@@ -100,8 +100,8 @@ create policy servicos_membros_all on public.servicos
   for all to authenticated using (public.usuario_membro_clinica(clinica_id))
   with check (public.usuario_membro_clinica(clinica_id));
 create policy agendamentos_membros_all on public.agendamentos
-  for all to authenticated using (public.usuario_membro_clinica(id_clinico))
-  with check (public.usuario_membro_clinica(id_clinico));
+  for all to authenticated using (public.usuario_membro_clinica(clinica_id))
+  with check (public.usuario_membro_clinica(clinica_id));
 
 create policy pacotes_select_membros on public.pacotes
   for select to authenticated using (public.usuario_membro_clinica(clinica_id));

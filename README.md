@@ -21,7 +21,7 @@ No SQL Editor do projeto, execute as migrations em ordem:
 1. `supabase/migrations/001_auth_rls.sql`: criação atômica da clínica inicial, funções de autorização e RLS.
 2. `supabase/migrations/002_pacientes_agenda_pacotes.sql`: dados adicionais de pacientes, pacotes, serviços e agenda; RPCs transacionais de paciente, agendamento e mudança de status.
 
-As tabelas base `clinicas`, `clinica_membros`, `pacientes`, `servicos`, `pacotes` e `agendamentos` devem existir antes de rodar as migrations. A coluna de clínica em `agendamentos` é `id_clinico`; nas demais entidades operacionais é `clinica_id`.
+As tabelas base `clinicas`, `clinica_membros`, `pacientes`, `servicos`, `pacotes` e `agendamentos` devem existir antes de rodar as migrations. A coluna de clínica em todas as entidades operacionais é `clinica_id`; a duração do serviço fica em `servicos.duracao_min`, enquanto a duração do agendamento fica em `agendamentos.duracao_minutos`.
 
 ## Supabase Auth
 

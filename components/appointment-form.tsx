@@ -46,7 +46,7 @@ export function AppointmentForm({ appointmentId, initialPatientId = "", initialS
         setServiceId(initialServiceId);
         setPackageId(initialPackageId);
         const initialService = loaded.services.find((service) => text(service, "id") === initialServiceId);
-        if (initialService) setDuration(text(initialService, "duracao_minutos") || "60");
+        if (initialService) setDuration(text(initialService, "duracao_min") || "60");
         const appointment = loaded.appointment;
         if (appointment) {
           setPatientId(text(appointment, "paciente_id"));
@@ -146,11 +146,11 @@ export function AppointmentForm({ appointmentId, initialPatientId = "", initialS
                 {newPatientError && <p role="alert" className="text-xs text-red-700 sm:col-span-3">{newPatientError}</p>}
               </div>}
             </div>
-            <label><span className={labelClass}>Serviço *</span><select required name="servico_id" value={serviceId} onChange={(event) => { setServiceId(event.target.value); setPackageId(""); const service = data.services.find((item) => text(item, "id") === event.target.value); setDuration(text(service ?? {}, "duracao_minutos") || "60"); }} className={inputClass}><option value="">Selecione</option>{data.services.map((service) => <option key={text(service, "id")} value={text(service, "id")}>{text(service, "nome")}</option>)}</select></label>
+            <label><span className={labelClass}>Serviço *</span><select required name="servico_id" value={serviceId} onChange={(event) => { setServiceId(event.target.value); setPackageId(""); const service = data.services.find((item) => text(item, "id") === event.target.value); setDuration(text(service ?? {}, "duracao_min") || "60"); }} className={inputClass}><option value="">Selecione</option>{data.services.map((service) => <option key={text(service, "id")} value={text(service, "id")}>{text(service, "nome")}</option>)}</select></label>
             <label><span className={labelClass}>Pacote (opcional)</span><select name="pacote_id" value={packageId} onChange={(event) => setPackageId(event.target.value)} className={inputClass}><option value="">Sem pacote</option>{eligiblePackages.map((pack) => <option key={text(pack, "id")} value={text(pack, "id")}>{text(pack, "nome")} · {Number(pack.total_sessoes) - Number(pack.sessoes_usadas)} sessões restantes</option>)}</select></label>
             <label><span className={labelClass}>Data *</span><input required name="data" type="date" value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} /></label>
             <label><span className={labelClass}>Hora *</span><input required name="hora" type="time" value={time} onChange={(event) => setTime(event.target.value)} className={inputClass} /></label>
-            <label><span className={labelClass}>Duração (minutos) *</span><input required name="duracao_minutos" type="number" min="5" max="720" value={duration} onChange={(event) => setDuration(event.target.value)} className={inputClass} /><span className="mt-1 block text-[11px] text-muted">Preenchida pela duração do serviço{selectedService ? ` (${text(selectedService, "duracao_minutos")} min)` : ""}; você pode ajustar.</span></label>
+            <label><span className={labelClass}>Duração (minutos) *</span><input required name="duracao_minutos" type="number" min="5" max="720" value={duration} onChange={(event) => setDuration(event.target.value)} className={inputClass} /><span className="mt-1 block text-[11px] text-muted">Preenchida pela duração do serviço{selectedService ? ` (${text(selectedService, "duracao_min")} min)` : ""}; você pode ajustar.</span></label>
             <label><span className={labelClass}>Profissional/atendente</span><select name="profissional_id" value={professionalId} onChange={(event) => setProfessionalId(event.target.value)} className={inputClass}><option value="">Sem profissional definido</option>{data.members.map((member) => <option key={text(member, "user_id")} value={text(member, "user_id")}>{text(member, "nome") || "Membro"} · {text(member, "role") === "dona" ? "Dona" : "Atendente"}</option>)}</select></label>
             <label className="md:col-span-2"><span className={labelClass}>Observações</span><textarea name="observacoes" rows={3} defaultValue={text(data.appointment ?? {}, "observacoes")} className={inputClass} /></label>
           </div>

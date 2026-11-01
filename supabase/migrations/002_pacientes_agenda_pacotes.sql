@@ -13,7 +13,7 @@ alter table public.pacientes
   add column if not exists ultima_visita date;
 
 alter table public.servicos
-  add column if not exists duracao_minutos integer not null default 60;
+  add column if not exists duracao_min integer not null default 60;
 
 alter table public.pacotes
   add column if not exists nome text not null default 'Pacote',
@@ -57,17 +57,17 @@ $$;
 create index if not exists pacientes_clinica_whatsapp_idx
   on public.pacientes (clinica_id, whatsapp);
 create index if not exists agendamentos_clinica_data_idx
-  on public.agendamentos (id_clinico, data_hora);
+  on public.agendamentos (clinica_id, data_hora);
 create index if not exists agendamentos_profissional_data_idx
-  on public.agendamentos (id_clinico, profissional_id, data_hora);
+  on public.agendamentos (clinica_id, profissional_id, data_hora);
 create index if not exists pacotes_clinica_paciente_idx
   on public.pacotes (clinica_id, paciente_id, status);
 
 drop policy if exists agendamentos_membros_all on public.agendamentos;
 create policy agendamentos_membros_all on public.agendamentos
   for all to authenticated
-  using (public.usuario_membro_clinica(id_clinico))
-  with check (public.usuario_membro_clinica(id_clinico));
+  using (public.usuario_membro_clinica(clinica_id))
+  with check (public.usuario_membro_clinica(clinica_id));
 
 drop policy if exists clinica_membros_select_membros on public.clinica_membros;
 create policy clinica_membros_select_membros on public.clinica_membros
@@ -207,7 +207,7 @@ begin
 
   if p_agendamento_id is not null then
     select status::text into v_status from public.agendamentos
-    where id = p_agendamento_id and id_clinico = p_clinica_id
+    where id = p_agendamento_id and clinica_id = p_clinica_id
     for update;
     if not found then raise exception 'AGENDAMENTO_NAO_ENCONTRADO'; end if;
     if v_status = 'realizado' then raise exception 'EDICAO_DE_REALIZADO_NAO_PERMITIDA'; end if;
@@ -215,7 +215,7 @@ begin
 
   if p_profissional_id is not null and exists (
     select 1 from public.agendamentos a
-    where a.id_clinico = p_clinica_id and a.profissional_id = p_profissional_id
+    where a.clinica_id = p_clinica_id and a.profissional_id = p_profissional_id
       and a.status::text not in ('cancelado', 'faltou')
       and (p_agendamento_id is null or a.id <> p_agendamento_id)
       and a.data_hora < p_data_hora + make_interval(mins => p_duracao_minutos)
@@ -224,7 +224,7 @@ begin
 
   if p_agendamento_id is null then
     insert into public.agendamentos (
-      id_clinico, paciente_id, servico_id, pacote_id, profissional_id, data_hora,
+      clinica_id, paciente_id, servico_id, pacote_id, profissional_id, data_hora,
       duracao_minutos, observacoes, status
     ) values (
       p_clinica_id, p_paciente_id, p_servico_id, p_pacote_id, p_profissional_id,
@@ -235,7 +235,7 @@ begin
       paciente_id = p_paciente_id, servico_id = p_servico_id, pacote_id = p_pacote_id,
       profissional_id = p_profissional_id, data_hora = p_data_hora,
       duracao_minutos = p_duracao_minutos, observacoes = nullif(trim(p_observacoes), '')
-    where id = p_agendamento_id and id_clinico = p_clinica_id
+    where id = p_agendamento_id and clinica_id = p_clinica_id
     returning id into v_id;
   end if;
   return v_id;
@@ -266,7 +266,7 @@ begin
     raise exception 'STATUS_INVALIDO';
   end if;
   select * into v_agendamento from public.agendamentos
-  where id = p_agendamento_id and id_clinico = p_clinica_id
+  where id = p_agendamento_id and clinica_id = p_clinica_id
   for update;
   if not found then raise exception 'AGENDAMENTO_NAO_ENCONTRADO'; end if;
 
@@ -288,12 +288,12 @@ begin
   end if;
 
   update public.agendamentos set status = p_status
-  where id = p_agendamento_id and id_clinico = p_clinica_id;
+  where id = p_agendamento_id and clinica_id = p_clinica_id;
 
   if v_agendamento.paciente_id is not null then
     update public.pacientes p set ultima_visita = (
       select max(a.data_hora::date) from public.agendamentos a
-      where a.paciente_id = v_agendamento.paciente_id and a.id_clinico = p_clinica_id
+      where a.paciente_id = v_agendamento.paciente_id and a.clinica_id = p_clinica_id
         and a.status::text = 'realizado'
     ) where p.id = v_agendamento.paciente_id and p.clinica_id = p_clinica_id;
   end if;

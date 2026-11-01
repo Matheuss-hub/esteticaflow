@@ -26,7 +26,7 @@ export async function loadDashboardData() {
   const supabase = createSupabaseServerClient();
   const clinicId = result.clinic.clinicaId;
   const [appointments, patients, services, packages] = await Promise.all([
-    supabase.from("agendamentos").select("*").eq("id_clinico", clinicId),
+    supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
     supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", clinicId),
     supabase.from("servicos").select("*").eq("clinica_id", clinicId),
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId),
@@ -47,7 +47,7 @@ export async function loadAgendaData() {
   const supabase = createSupabaseServerClient();
   const clinicId = result.clinic.clinicaId;
   const [appointments, patients, services, members] = await Promise.all([
-    supabase.from("agendamentos").select("*").eq("id_clinico", clinicId),
+    supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
     supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId),
     supabase.from("servicos").select("*").eq("clinica_id", clinicId),
     supabase.from("clinica_membros").select("user_id, nome, role").eq("clinica_id", clinicId),
@@ -69,7 +69,7 @@ export async function loadPatientsData() {
   const clinicId = result.clinic.clinicaId;
   const [patients, appointments] = await Promise.all([
     supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", clinicId),
-    supabase.from("agendamentos").select("*").eq("id_clinico", clinicId),
+    supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
   ]);
   const error = patients.error || appointments.error;
   if (error) return { error: databaseError() };
