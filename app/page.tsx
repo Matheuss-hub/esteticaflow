@@ -7,14 +7,23 @@ import { AppointmentList } from "@/components/appointment-list";
 import { EmptyState, ErrorNotice, PageHeading, Panel } from "@/components/ui";
 import { appointmentDate, dateKey, formatDateLong, numeric, Row, text } from "@/lib/data";
 import { loadDashboardData } from "@/app/actions/data";
+import { FirstStepsChecklist } from "@/components/first-steps-checklist";
+import { AccessLink } from "@/components/access-link";
 
-export default function DashboardPage() {
+export default function DashboardPage({ searchParams }: { searchParams: { aviso?: string } }) {
   const [appointments, setAppointments] = useState<Row[]>([]);
   const [patients, setPatients] = useState<Row[]>([]);
   const [services, setServices] = useState<Row[]>([]);
   const [packages, setPackages] = useState<Row[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [onboarding, setOnboarding] = useState<{
+    role: string;
+    checklistOculto: boolean;
+    profileComplete: boolean;
+    memberCount: number;
+    temAcesso: boolean;
+  } | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -26,6 +35,7 @@ export default function DashboardPage() {
           setPatients(result.patients as Row[]);
           setServices(result.services as Row[]);
           setPackages(result.packages as Row[]);
+          setOnboarding(result.onboarding);
         }
       } catch {
         setError("Não foi possível carregar o painel. Tente novamente.");
@@ -57,6 +67,7 @@ export default function DashboardPage() {
 
   const patientNames = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "nome", "name")])), [patients]);
   const patientPhones = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "whatsapp", "telefone")])), [patients]);
+  const patientConsents = useMemo(() => new Map(patients.map((item) => [text(item, "id"), item.consentimento_whatsapp === true])), [patients]);
   const serviceNames = useMemo(() => new Map(services.map((item) => [text(item, "id"), text(item, "nome", "name")])), [services]);
 
   return (
@@ -67,11 +78,33 @@ export default function DashboardPage() {
         description={formatDateLong(new Date(), "EEEE, d 'de' MMMM 'de' yyyy")}
         action={<div className="flex flex-wrap gap-2">
           <Link href="/agenda" className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-sm font-semibold text-rose-700 transition hover:bg-rose-50">Abrir agenda <ArrowRight size={16} /></Link>
-          <Link href="/agenda/novo" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"><CalendarPlus size={16} /> Novo agendamento</Link>
+          <AccessLink href="/agenda/novo" disabled={onboarding ? !onboarding.temAcesso : true} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700"><CalendarPlus size={16} /> Novo agendamento</AccessLink>
         </div>}
       />
 
+      {searchParams.aviso === "clinica-responsavel" && (
+        <p role="status" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Apenas a responsável pela clínica pode editar estes dados.
+        </p>
+      )}
+      {searchParams.aviso === "equipe-responsavel" && (
+        <p role="status" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          Apenas a responsável pela clínica gerencia a equipe.
+        </p>
+      )}
       {error && <div className="mb-6"><ErrorNotice message={error} /></div>}
+
+      {onboarding && <FirstStepsChecklist
+        role={onboarding.role}
+        hidden={onboarding.checklistOculto}
+        profileComplete={onboarding.profileComplete}
+        memberCount={onboarding.memberCount}
+        serviceCount={services.length}
+        patientCount={patients.length}
+        packageCount={packages.length}
+        appointmentCount={appointments.length}
+        temAcesso={onboarding.temAcesso}
+      />}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <div className="rounded-2xl bg-rose-600 p-5 text-white shadow-soft sm:p-6">
@@ -121,7 +154,7 @@ export default function DashboardPage() {
           {loading && !error ? (
             <p className="py-8 text-center text-sm text-muted">Carregando agenda...</p>
           ) : (
-            <AppointmentList appointments={todayAppointments} patientNames={patientNames} patientPhones={patientPhones} serviceNames={serviceNames} />
+            <AppointmentList appointments={todayAppointments} patientNames={patientNames} patientPhones={patientPhones} patientConsents={patientConsents} serviceNames={serviceNames} />
           )}
         </Panel>
 

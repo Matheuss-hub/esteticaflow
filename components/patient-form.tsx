@@ -24,13 +24,14 @@ function maskCpf(value: string) {
 const inputClass = "w-full rounded-xl border border-rose-100 bg-canvas px-3.5 py-3 text-sm outline-none transition placeholder:text-muted/70 focus:border-rose-400 focus:ring-2 focus:ring-rose-100";
 const labelClass = "mb-1.5 block text-xs font-medium text-ink";
 
-export function PatientForm({ patient }: { patient?: Row }) {
+export function PatientForm({ patient, canWrite = true }: { patient?: Row; canWrite?: boolean }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [whatsapp, setWhatsapp] = useState(maskPhone(text(patient ?? {}, "whatsapp")));
   const [cpf, setCpf] = useState(maskCpf(text(patient ?? {}, "cpf")));
   const consentDate = text(patient ?? {}, "consentimento_whatsapp_em");
+  const [consentGranted, setConsentGranted] = useState(patient?.consentimento_whatsapp === true);
   const editing = Boolean(patient);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -57,7 +58,9 @@ export function PatientForm({ patient }: { patient?: Row }) {
         action={<button type="button" onClick={() => router.back()} className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-4 py-2.5 text-sm font-semibold text-ink"><ArrowLeft size={16} /> Voltar</button>}
       />
       <form onSubmit={submit} className="space-y-5">
+        {!canWrite && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Disponível ao ativar o plano</p>}
         {patient && <input type="hidden" name="id" value={text(patient, "id")} />}
+        <fieldset disabled={!canWrite} className="space-y-5 disabled:opacity-60">
         <Panel title="Dados pessoais" subtitle="Informações para contato e identificação">
           <div className="grid gap-4 md:grid-cols-2">
             <label className="md:col-span-2"><span className={labelClass}>Nome completo *</span><input required name="nome" defaultValue={text(patient ?? {}, "nome")} className={inputClass} autoComplete="name" /></label>
@@ -82,18 +85,28 @@ export function PatientForm({ patient }: { patient?: Row }) {
           </div>
         </Panel>
 
-        <Panel title="Consentimento de contato" subtitle="Registre a autorização para mensagens pelo WhatsApp">
+        <Panel title="Contato por WhatsApp" subtitle="Pergunte à paciente e marque aqui. A data do registro fica salva automaticamente.">
           <label className="flex items-start gap-3 text-sm leading-6">
-            <input name="consentimento_whatsapp" type="checkbox" defaultChecked={patient?.consentimento_whatsapp === true} className="mt-1 h-4 w-4 accent-rose-600" />
-            <span>Autorizo o contato com esta paciente pelo WhatsApp para assuntos relacionados à clínica.</span>
+            <input name="consentimento_whatsapp" type="checkbox" checked={consentGranted} onChange={(event) => setConsentGranted(event.target.checked)} className="mt-1 h-4 w-4 accent-rose-600" />
+            <span>A paciente concordou em receber mensagens da clínica pelo WhatsApp (confirmações, lembretes e avisos).</span>
           </label>
-          {consentDate && <p className="mt-3 text-xs text-muted">Consentimento registrado em {new Date(consentDate).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" })}.</p>}
+          {consentGranted && consentDate && (
+            <p className="mt-3 text-xs text-muted">
+              Registrado em {new Intl.DateTimeFormat("pt-BR", {
+                timeZone: "America/Sao_Paulo",
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              }).format(new Date(consentDate))}
+            </p>
+          )}
         </Panel>
 
         {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
         <div className="flex justify-end">
-          <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"><Save size={16} />{saving ? "Salvando..." : "Salvar paciente"}</button>
+          <button type="submit" disabled={saving || !canWrite} aria-disabled={!canWrite} title={!canWrite ? "Disponível ao ativar o plano" : undefined} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:opacity-60"><Save size={16} />{saving ? "Salvando..." : "Salvar paciente"}</button>
         </div>
+        </fieldset>
       </form>
     </>
   );

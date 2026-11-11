@@ -2,13 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getClinicaAtual } from "@/lib/clinica";
+import { exigirAcessoAtivo, getClinicaAtual } from "@/lib/clinica";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ActionError = { error: string };
 type ActionSuccess = { success: string; id?: string };
 
 function rpcErrorMessage(message: string): string | undefined {
+  if (message.includes("TESTE_ENCERRADO")) return "Seu teste grátis terminou. Fale com o suporte para ativar o plano.";
   if (message.includes("CLINICA_SEM_ACESSO")) return "Você não tem acesso a esta clínica.";
   if (message.includes("PACIENTE_DUPLICADO")) return "Já existe uma paciente com este WhatsApp nesta clínica.";
   if (message.includes("CONFLITO_DE_HORARIO")) return "Este profissional já tem outro atendimento nesse horário.";
@@ -36,11 +37,11 @@ export async function loadPatientsPageData() {
   if (!context.clinic) return { error: context.error };
   const supabase = createSupabaseServerClient();
   const [patients, appointments] = await Promise.all([
-    supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", context.clinic.clinicaId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp, ultima_visita").eq("clinica_id", context.clinic.clinicaId),
     supabase.from("agendamentos").select("id, paciente_id, data_hora, status").eq("clinica_id", context.clinic.clinicaId),
   ]);
   if (patients.error || appointments.error) return { error: "Não foi possível carregar os pacientes." };
-  return { patients: patients.data ?? [], appointments: appointments.data ?? [] };
+  return { patients: patients.data ?? [], appointments: appointments.data ?? [], temAcesso: context.clinic.assinatura.temAcesso };
 }
 
 const patientSchema = z.object({
@@ -60,6 +61,8 @@ const patientSchema = z.object({
 });
 
 export async function savePatientAction(formData: FormData): Promise<ActionError | (ActionSuccess & { id: string })> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = patientSchema.safeParse({
     id: value(formData, "id"), nome: value(formData, "nome"), whatsapp: value(formData, "whatsapp"),
     email: value(formData, "email"), data_nascimento: value(formData, "data_nascimento"),
@@ -69,11 +72,10 @@ export async function savePatientAction(formData: FormData): Promise<ActionError
     observacoes: value(formData, "observacoes"), consentimento_whatsapp: formData.get("consentimento_whatsapp") ?? "",
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
-  const context = await clinicContext();
-  if (!context.clinic) return { error: context.error };
+  const clinic = access.clinic;
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase.rpc("salvar_paciente", {
-    p_clinica_id: context.clinic.clinicaId,
+    p_clinica_id: clinic.clinicaId,
     p_paciente_id: parsed.data.id || null,
     p_nome: parsed.data.nome,
     p_whatsapp: parsed.data.whatsapp,
@@ -94,6 +96,7 @@ export async function savePatientAction(formData: FormData): Promise<ActionError
     return { error: "Não foi possível salvar a paciente. Confira os dados e tente novamente." };
   }
   revalidatePath("/pacientes");
+  revalidatePath("/");
   revalidatePath(`/pacientes/${data}`);
   return { success: "Paciente salva com sucesso.", id: data };
 }
@@ -113,7 +116,13 @@ export async function loadPatientDetailAction(patientId: string) {
   ]);
   if (patient.error || appointments.error || packages.error || services.error) return { error: "Não foi possível carregar o detalhe da paciente." };
   if (!patient.data) return { error: "Paciente não encontrada nesta clínica." };
-  return { patient: patient.data, appointments: appointments.data ?? [], packages: packages.data ?? [], services: services.data ?? [] };
+  return {
+    patient: patient.data,
+    appointments: appointments.data ?? [],
+    packages: packages.data ?? [],
+    services: services.data ?? [],
+    temAcesso: context.clinic.assinatura.temAcesso,
+  };
 }
 
 export async function loadAppointmentFormData(appointmentId?: string) {
@@ -122,14 +131,22 @@ export async function loadAppointmentFormData(appointmentId?: string) {
   const supabase = createSupabaseServerClient();
   const clinicId = context.clinic.clinicaId;
   const [patients, services, packages, members, appointment] = await Promise.all([
-    supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId).order("nome"),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp").eq("clinica_id", clinicId).order("nome"),
     supabase.from("servicos").select("id, nome, duracao_min").eq("clinica_id", clinicId).order("nome"),
     supabase.from("pacotes").select("id, nome, paciente_id, servico_id, total_sessoes, sessoes_usadas, status, validade").eq("clinica_id", clinicId),
     supabase.from("clinica_membros").select("user_id, nome, role").eq("clinica_id", clinicId),
     appointmentId ? supabase.from("agendamentos").select("*").eq("clinica_id", clinicId).eq("id", appointmentId).maybeSingle() : Promise.resolve({ data: null, error: null }),
   ]);
   if (patients.error || services.error || packages.error || members.error || appointment.error) return { error: "Não foi possível carregar os dados do formulário." };
-  return { patients: patients.data ?? [], services: services.data ?? [], packages: packages.data ?? [], members: members.data ?? [], appointment: appointment.data };
+  return {
+    patients: patients.data ?? [],
+    services: services.data ?? [],
+    packages: packages.data ?? [],
+    members: members.data ?? [],
+    appointment: appointment.data,
+    role: context.clinic.role,
+    temAcesso: context.clinic.assinatura.temAcesso,
+  };
 }
 
 const appointmentSchema = z.object({
@@ -145,6 +162,8 @@ const appointmentSchema = z.object({
 });
 
 export async function saveAppointmentAction(formData: FormData): Promise<ActionError | (ActionSuccess & { id: string })> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = appointmentSchema.safeParse({
     id: value(formData, "id"), paciente_id: value(formData, "paciente_id"), servico_id: value(formData, "servico_id"),
     pacote_id: value(formData, "pacote_id"), profissional_id: value(formData, "profissional_id"),
@@ -152,11 +171,10 @@ export async function saveAppointmentAction(formData: FormData): Promise<ActionE
     duracao_minutos: value(formData, "duracao_minutos"), observacoes: value(formData, "observacoes"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados do agendamento." };
-  const context = await clinicContext();
-  if (!context.clinic) return { error: context.error };
+  const clinic = access.clinic;
   const supabase = createSupabaseServerClient();
   const { data, error } = await supabase.rpc("salvar_agendamento", {
-    p_clinica_id: context.clinic.clinicaId,
+    p_clinica_id: clinic.clinicaId,
     p_agendamento_id: parsed.data.id || null,
     p_paciente_id: parsed.data.paciente_id,
     p_servico_id: parsed.data.servico_id,
@@ -179,15 +197,15 @@ export async function saveAppointmentAction(formData: FormData): Promise<ActionE
 }
 
 export async function changeAppointmentStatusAction(formData: FormData): Promise<ActionError | ActionSuccess> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = z.object({ id: z.string().uuid(), status: z.enum(["agendado", "confirmado", "faltou", "cancelado", "realizado"]) }).safeParse({
     id: value(formData, "id"), status: value(formData, "status"),
   });
   if (!parsed.success) return { error: "Selecione um status válido." };
-  const context = await clinicContext();
-  if (!context.clinic) return { error: context.error };
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.rpc("alterar_status_agendamento", {
-    p_clinica_id: context.clinic.clinicaId,
+    p_clinica_id: access.clinic.clinicaId,
     p_agendamento_id: parsed.data.id,
     p_status: parsed.data.status,
   });
@@ -210,11 +228,11 @@ export async function loadPackagesPageData() {
   const clinicId = context.clinic.clinicaId;
   const [packages, patients, services] = await Promise.all([
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId),
-    supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp").eq("clinica_id", clinicId),
     supabase.from("servicos").select("id, nome").eq("clinica_id", clinicId),
   ]);
   if (packages.error || patients.error || services.error) return { error: "Não foi possível carregar os pacotes." };
-  return { packages: packages.data ?? [], patients: patients.data ?? [], services: services.data ?? [] };
+  return { packages: packages.data ?? [], patients: patients.data ?? [], services: services.data ?? [], temAcesso: context.clinic.assinatura.temAcesso };
 }
 
 const packageSchema = z.object({
@@ -232,6 +250,8 @@ const packageSchema = z.object({
 }).refine((item) => item.sessoes_usadas <= item.total_sessoes, { message: "Sessões usadas não podem superar o total.", path: ["sessoes_usadas"] });
 
 export async function savePackageAction(formData: FormData): Promise<ActionError | (ActionSuccess & { id: string })> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = packageSchema.safeParse({
     id: value(formData, "id"), paciente_id: value(formData, "paciente_id"), servico_id: value(formData, "servico_id"),
     nome: value(formData, "nome"), total_sessoes: value(formData, "total_sessoes"), sessoes_usadas: value(formData, "sessoes_usadas"),
@@ -239,10 +259,8 @@ export async function savePackageAction(formData: FormData): Promise<ActionError
     data_inicio: value(formData, "data_inicio"), validade: value(formData, "validade"), observacoes: value(formData, "observacoes"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados do pacote." };
-  const context = await clinicContext();
-  if (!context.clinic) return { error: context.error };
   const supabase = createSupabaseServerClient();
-  const clinicId = context.clinic.clinicaId;
+  const clinicId = access.clinic.clinicaId;
   const [patient, service] = await Promise.all([
     supabase.from("pacientes").select("id").eq("clinica_id", clinicId).eq("id", parsed.data.paciente_id).maybeSingle(),
     supabase.from("servicos").select("id").eq("clinica_id", clinicId).eq("id", parsed.data.servico_id).maybeSingle(),
@@ -260,7 +278,7 @@ export async function savePackageAction(formData: FormData): Promise<ActionError
     ? supabase.from("pacotes").update(fields).eq("clinica_id", clinicId).eq("id", parsed.data.id).select("id").maybeSingle()
     : supabase.from("pacotes").insert({ ...fields, clinica_id: clinicId }).select("id").single();
   const { data, error } = await query;
-  if (error || !data) return { error: "Não foi possível salvar o pacote." };
+  if (error || !data) return { error: error?.message.includes("TESTE_ENCERRADO") ? "Seu teste grátis terminou. Fale com o suporte para ativar o plano." : "Não foi possível salvar o pacote." };
   revalidatePath("/pacotes");
   revalidatePath(`/pacotes/${data.id}`);
   revalidatePath(`/pacientes/${parsed.data.paciente_id}`);
@@ -278,23 +296,30 @@ export async function loadPackageDetailAction(packageId: string) {
   const [pack, appointments, patient, service] = await Promise.all([
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId).eq("id", id.data).maybeSingle(),
     supabase.from("agendamentos").select("*").eq("clinica_id", clinicId).eq("pacote_id", id.data).order("data_hora", { ascending: true }),
-    supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp").eq("clinica_id", clinicId),
     supabase.from("servicos").select("id, nome").eq("clinica_id", clinicId),
   ]);
   if (pack.error || appointments.error || patient.error || service.error) return { error: "Não foi possível carregar o pacote." };
   if (!pack.data) return { error: "Pacote não encontrado nesta clínica." };
-  return { pack: pack.data, appointments: appointments.data ?? [], patients: patient.data ?? [], services: service.data ?? [], role: context.clinic.role };
+  return {
+    pack: pack.data,
+    appointments: appointments.data ?? [],
+    patients: patient.data ?? [],
+    services: service.data ?? [],
+    role: context.clinic.role,
+    temAcesso: context.clinic.assinatura.temAcesso,
+  };
 }
 
 export async function cancelPackageAction(formData: FormData): Promise<ActionError | ActionSuccess> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const id = z.string().uuid().safeParse(value(formData, "id"));
   if (!id.success) return { error: "Pacote inválido." };
-  const context = await clinicContext();
-  if (!context.clinic) return { error: context.error };
-  if (context.clinic.role !== "dona") return { error: "Somente a dona pode cancelar um pacote." };
+  if (access.clinic.role !== "dona") return { error: "Somente a dona pode cancelar um pacote." };
   const supabase = createSupabaseServerClient();
-  const { error } = await supabase.from("pacotes").update({ status: "cancelado" }).eq("clinica_id", context.clinic.clinicaId).eq("id", id.data);
-  if (error) return { error: "Não foi possível cancelar o pacote." };
+  const { error } = await supabase.from("pacotes").update({ status: "cancelado" }).eq("clinica_id", access.clinic.clinicaId).eq("id", id.data);
+  if (error) return { error: rpcErrorMessage(error.message) ?? "Não foi possível cancelar o pacote." };
   revalidatePath("/pacotes");
   revalidatePath(`/pacotes/${id.data}`);
   return { success: "Pacote cancelado." };

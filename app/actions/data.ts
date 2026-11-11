@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { getClinicaAtual } from "@/lib/clinica";
+import { exigirAcessoAtivo, getClinicaAtual } from "@/lib/clinica";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ActionResult = { error?: string; success?: string };
@@ -25,19 +25,27 @@ export async function loadDashboardData() {
   if (!result.clinic) return { error: result.error };
   const supabase = createSupabaseServerClient();
   const clinicId = result.clinic.clinicaId;
-  const [appointments, patients, services, packages] = await Promise.all([
+  const [appointments, patients, services, packages, members] = await Promise.all([
     supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
-    supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", clinicId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp, ultima_visita").eq("clinica_id", clinicId),
     supabase.from("servicos").select("*").eq("clinica_id", clinicId),
     supabase.from("pacotes").select("*").eq("clinica_id", clinicId),
+    supabase.from("clinica_membros").select("user_id").eq("clinica_id", clinicId),
   ]);
-  const error = appointments.error || patients.error || services.error || packages.error;
+  const error = appointments.error || patients.error || services.error || packages.error || members.error;
   if (error) return { error: databaseError() };
   return {
     appointments: appointments.data ?? [],
     patients: patients.data ?? [],
     services: services.data ?? [],
     packages: packages.data ?? [],
+    onboarding: {
+      role: result.clinic.role,
+      checklistOculto: result.clinic.checklistOculto,
+      profileComplete: Boolean(result.clinic.userNome && result.clinic.fotoPath),
+      memberCount: members.data?.length ?? 0,
+      temAcesso: result.clinic.assinatura.temAcesso,
+    },
   };
 }
 
@@ -48,7 +56,7 @@ export async function loadAgendaData() {
   const clinicId = result.clinic.clinicaId;
   const [appointments, patients, services, members] = await Promise.all([
     supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
-    supabase.from("pacientes").select("id, nome, whatsapp").eq("clinica_id", clinicId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp").eq("clinica_id", clinicId),
     supabase.from("servicos").select("*").eq("clinica_id", clinicId),
     supabase.from("clinica_membros").select("user_id, nome, role").eq("clinica_id", clinicId),
   ]);
@@ -59,6 +67,7 @@ export async function loadAgendaData() {
     patients: patients.data ?? [],
     services: services.data ?? [],
     members: members.data ?? [],
+    temAcesso: result.clinic.assinatura.temAcesso,
   };
 }
 
@@ -68,12 +77,16 @@ export async function loadPatientsData() {
   const supabase = createSupabaseServerClient();
   const clinicId = result.clinic.clinicaId;
   const [patients, appointments] = await Promise.all([
-    supabase.from("pacientes").select("id, nome, whatsapp, ultima_visita").eq("clinica_id", clinicId),
+    supabase.from("pacientes").select("id, nome, whatsapp, consentimento_whatsapp, ultima_visita").eq("clinica_id", clinicId),
     supabase.from("agendamentos").select("*").eq("clinica_id", clinicId),
   ]);
   const error = patients.error || appointments.error;
   if (error) return { error: databaseError() };
-  return { patients: patients.data ?? [], appointments: appointments.data ?? [] };
+  return {
+    patients: patients.data ?? [],
+    appointments: appointments.data ?? [],
+    temAcesso: result.clinic.assinatura.temAcesso,
+  };
 }
 
 const patientSchema = z.object({
@@ -82,21 +95,22 @@ const patientSchema = z.object({
 });
 
 export async function createPatientAction(formData: FormData): Promise<ActionResult> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = patientSchema.safeParse({
     nome: formData.get("nome"),
     whatsapp: formData.get("whatsapp"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
-  const result = await getClinicOrError();
-  if (!result.clinic) return { error: result.error };
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.from("pacientes").insert({
-    clinica_id: result.clinic.clinicaId,
+    clinica_id: access.clinic.clinicaId,
     nome: parsed.data.nome,
     whatsapp: parsed.data.whatsapp,
   });
-  if (error) return { error: databaseError() };
+  if (error) return { error: error.message.includes("TESTE_ENCERRADO") ? "Seu teste grátis terminou. Fale com o suporte para ativar o plano." : databaseError() };
   revalidatePath("/pacientes");
+  revalidatePath("/");
   return { success: "Paciente cadastrada com sucesso." };
 }
 
@@ -130,6 +144,8 @@ const packageSchema = z.object({
 });
 
 export async function createPackageAction(formData: FormData): Promise<ActionResult> {
+  const access = await exigirAcessoAtivo();
+  if ("error" in access) return { error: access.error };
   const parsed = packageSchema.safeParse({
     paciente_id: formData.get("paciente_id"),
     servico_id: formData.get("servico_id"),
@@ -137,10 +153,8 @@ export async function createPackageAction(formData: FormData): Promise<ActionRes
     sessoes_usadas: formData.get("sessoes_usadas"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
-  const result = await getClinicOrError();
-  if (!result.clinic) return { error: result.error };
   const supabase = createSupabaseServerClient();
-  const clinicId = result.clinic.clinicaId;
+  const clinicId = access.clinic.clinicaId;
   const [patient, service] = await Promise.all([
     supabase.from("pacientes").select("id").eq("clinica_id", clinicId).eq("id", parsed.data.paciente_id).maybeSingle(),
     supabase.from("servicos").select("id").eq("clinica_id", clinicId).eq("id", parsed.data.servico_id).maybeSingle(),
@@ -155,7 +169,7 @@ export async function createPackageAction(formData: FormData): Promise<ActionRes
     total_sessoes: parsed.data.total_sessoes,
     sessoes_usadas: parsed.data.sessoes_usadas,
   });
-  if (error) return { error: databaseError() };
+  if (error) return { error: error.message.includes("TESTE_ENCERRADO") ? "Seu teste grátis terminou. Fale com o suporte para ativar o plano." : databaseError() };
   revalidatePath("/pacotes");
   revalidatePath("/");
   return { success: "Pacote criado com sucesso." };

@@ -8,13 +8,15 @@ import { cancelPackageAction, loadPackageDetailAction, loadPackagesPageData, sav
 import { EmptyState, ErrorNotice, PageHeading, Panel } from "@/components/ui";
 import { appointmentDate, dateKey, formatDate, formatTime, numeric, Row, statusLabel, text, whatsappLink } from "@/lib/data";
 import { mensagemPacote } from "@/lib/mensagens";
+import { AccessLink } from "@/components/access-link";
+import { WhatsAppConsentLink } from "@/components/whatsapp-consent-link";
 
 const inputClass = "w-full rounded-xl border border-rose-100 bg-canvas px-3.5 py-3 text-sm outline-none transition focus:border-rose-400 focus:ring-2 focus:ring-rose-100";
 const labelClass = "mb-1.5 block text-xs font-medium text-ink";
-type PackageLists = { patients: Row[]; services: Row[] };
-type PackageDetail = { pack: Row; appointments: Row[]; patients: Row[]; services: Row[]; role: string };
+type PackageLists = { patients: Row[]; services: Row[]; temAcesso: boolean };
+type PackageDetail = { pack: Row; appointments: Row[]; patients: Row[]; services: Row[]; role: string; temAcesso: boolean };
 
-export function PackageForm({ packageId, initialPatientId = "" }: { packageId?: string; initialPatientId?: string }) {
+export function PackageForm({ packageId, initialPatientId = "", initialServiceId = "" }: { packageId?: string; initialPatientId?: string; initialServiceId?: string }) {
   const router = useRouter();
   const [lists, setLists] = useState<PackageLists | null>(null);
   const [pack, setPack] = useState<Row | null>(null);
@@ -23,7 +25,7 @@ export function PackageForm({ packageId, initialPatientId = "" }: { packageId?: 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [patientId, setPatientId] = useState(initialPatientId);
-  const [serviceId, setServiceId] = useState("");
+  const [serviceId, setServiceId] = useState(initialServiceId);
   const [total, setTotal] = useState("10");
   const [used, setUsed] = useState("0");
 
@@ -34,21 +36,23 @@ export function PackageForm({ packageId, initialPatientId = "" }: { packageId?: 
       else if (packageId) {
         const detail = result as PackageDetail;
         setPack(detail.pack);
-        setLists({ patients: detail.patients, services: detail.services });
+        setLists({ patients: detail.patients, services: detail.services, temAcesso: detail.temAcesso });
         setPatientId(text(detail.pack, "paciente_id"));
         setServiceId(text(detail.pack, "servico_id"));
         setTotal(text(detail.pack, "total_sessoes") || "1");
         setUsed(text(detail.pack, "sessoes_usadas") || "0");
       } else {
-        const pageData = result as { patients: Row[]; services: Row[] };
-        setLists({ patients: pageData.patients, services: pageData.services });
+        const pageData = result as { patients: Row[]; services: Row[]; temAcesso: boolean };
+        setLists({ patients: pageData.patients, services: pageData.services, temAcesso: pageData.temAcesso });
+        setPatientId(initialPatientId);
+        setServiceId(initialServiceId);
       }
       setLoading(false);
     }).catch(() => {
       setLoadError("Não foi possível carregar o formulário.");
       setLoading(false);
     });
-  }, [packageId]);
+  }, [packageId, initialPatientId, initialServiceId]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -71,7 +75,9 @@ export function PackageForm({ packageId, initialPatientId = "" }: { packageId?: 
     <PageHeading eyebrow="Planos de cuidado" title={packageId ? "Editar pacote" : "Novo pacote"} description="Registre as sessões, condições e pagamento do plano."
       action={<Link href="/pacotes" className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-4 py-2.5 text-sm font-semibold"><ArrowLeft size={16} /> Voltar</Link>} />
     <form onSubmit={submit} className="space-y-5">
+      {!lists.temAcesso && <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">Disponível ao ativar o plano</p>}
       {packageId && <input type="hidden" name="id" value={packageId} />}
+      <fieldset disabled={!lists.temAcesso} className="space-y-5 disabled:opacity-60">
       <Panel title="Dados do pacote">
         <div className="grid gap-4 md:grid-cols-2">
           <label><span className={labelClass}>Paciente *</span><select required name="paciente_id" value={patientId} onChange={(event) => setPatientId(event.target.value)} className={inputClass}><option value="">Selecione</option>{lists.patients.map((patient) => <option key={text(patient, "id")} value={text(patient, "id")}>{text(patient, "nome")}</option>)}</select></label>
@@ -87,7 +93,8 @@ export function PackageForm({ packageId, initialPatientId = "" }: { packageId?: 
         </div>
       </Panel>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</p>}
-      <div className="flex justify-end"><button disabled={saving} type="submit" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"><Save size={16} />{saving ? "Salvando..." : "Salvar pacote"}</button></div>
+      <div className="flex justify-end"><button disabled={saving || !lists.temAcesso} aria-disabled={!lists.temAcesso} title={!lists.temAcesso ? "Disponível ao ativar o plano" : undefined} type="submit" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-3 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-60"><Save size={16} />{saving ? "Salvando..." : "Salvar pacote"}</button></div>
+      </fieldset>
     </form>
   </>;
 }
@@ -100,6 +107,7 @@ export function PackagesPage() {
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [temAcesso, setTemAcesso] = useState(false);
 
   useEffect(() => {
     loadPackagesPageData().then((result) => {
@@ -108,6 +116,7 @@ export function PackagesPage() {
         setPackages(result.packages as Row[]);
         setPatients(result.patients as Row[]);
         setServices(result.services as Row[]);
+        setTemAcesso(result.temAcesso);
       }
       setLoading(false);
     }).catch(() => {
@@ -133,7 +142,7 @@ export function PackagesPage() {
 
   return <>
     <PageHeading eyebrow="Cuidado contínuo" title="Pacotes" description="Acompanhe sessões, validade e renovação dos planos."
-      action={<Link href="/pacotes/novo" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><PackagePlus size={16} /> Novo pacote</Link>} />
+      action={<AccessLink href="/pacotes/novo" disabled={!temAcesso} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><PackagePlus size={16} /> Novo pacote</AccessLink>} />
     {error && <div className="mb-5"><ErrorNotice message={error} /></div>}
     <Panel title="Planos cadastrados" subtitle={`${visiblePackages.length} ${visiblePackages.length === 1 ? "pacote" : "pacotes"}`}>
       <div className="mb-5 flex flex-wrap gap-3">
@@ -196,7 +205,7 @@ export function PackageDetailPage({ packageId }: { packageId: string }) {
 
   if (loading) return <p className="py-10 text-center text-sm text-muted">Carregando pacote...</p>;
   if (error || !data) return <ErrorNotice message={error || "Pacote não encontrado."} />;
-  const { pack, appointments, patients, services, role } = data;
+  const { pack, appointments, patients, services, role, temAcesso } = data;
   const patient = patients.find((item) => text(item, "id") === text(pack, "paciente_id"));
   const serviceName = services.find((item) => text(item, "id") === text(pack, "servico_id"));
   const total = numeric(pack, "total_sessoes");
@@ -211,10 +220,10 @@ export function PackageDetailPage({ packageId }: { packageId: string }) {
     <PageHeading eyebrow="Plano de cuidado" title={text(pack, "nome") || "Pacote"} description={`${text(patient ?? {}, "nome")} · ${text(serviceName ?? {}, "nome")}`}
       action={<div className="flex flex-wrap gap-2">
         <Link href="/pacotes" className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold"><ArrowLeft size={16} /> Voltar</Link>
-        <Link href={`/pacotes/${packageId}/editar`} className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold"><Pencil size={15} /> Editar</Link>
-        {status === "ativo" && <Link href={`/agenda/novo?paciente_id=${text(pack, "paciente_id")}&servico_id=${text(pack, "servico_id")}&pacote_id=${packageId}`} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white"><CalendarPlus size={16} /> Agendar próxima sessão</Link>}
-        {phone && <a href={whatsappLink(phone, mensagemPacote(text(patient ?? {}, "nome"), text(pack, "nome"), remaining))} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white"><MessageCircle size={16} /> Enviar no Zap</a>}
-        {role === "dona" && status === "ativo" && <button type="button" disabled={saving} onClick={() => void cancel()} title="Cancelar pacote" className="rounded-xl border border-red-200 bg-white p-2.5 text-red-700 disabled:opacity-50"><XCircle size={17} /></button>}
+        <Link href={`/pacotes/${packageId}/editar`} aria-disabled={!temAcesso} tabIndex={temAcesso ? undefined : -1} onClick={(event) => { if (!temAcesso) event.preventDefault(); }} title={!temAcesso ? "Disponível ao ativar o plano" : undefined} className={`inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold ${!temAcesso ? "cursor-not-allowed opacity-50" : ""}`}><Pencil size={15} /> Editar</Link>
+        {status === "ativo" && <Link href={`/agenda/novo?paciente_id=${text(pack, "paciente_id")}&servico_id=${text(pack, "servico_id")}&pacote_id=${packageId}`} aria-disabled={!temAcesso} tabIndex={temAcesso ? undefined : -1} onClick={(event) => { if (!temAcesso) event.preventDefault(); }} title={!temAcesso ? "Disponível ao ativar o plano" : undefined} className={`inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white ${!temAcesso ? "cursor-not-allowed opacity-50" : ""}`}><CalendarPlus size={16} /> Agendar próxima sessão</Link>}
+        {phone && <WhatsAppConsentLink href={whatsappLink(phone, mensagemPacote(text(patient ?? {}, "nome"), text(pack, "nome"), remaining))} authorized={patient?.consentimento_whatsapp === true} label={`Enviar mensagem para ${text(patient ?? {}, "nome")}`} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white"><MessageCircle size={16} /> Enviar no Zap</WhatsAppConsentLink>}
+        {role === "dona" && status === "ativo" && <button type="button" disabled={saving || !temAcesso} aria-disabled={!temAcesso} onClick={() => void cancel()} title={temAcesso ? "Cancelar pacote" : "Disponível ao ativar o plano"} className="rounded-xl border border-red-200 bg-white p-2.5 text-red-700 disabled:opacity-50"><XCircle size={17} /></button>}
       </div>} />
     {cancelError && <p role="alert" className="mb-4 text-sm text-red-700">{cancelError}</p>}
     <div className="grid gap-5 xl:grid-cols-2">
@@ -228,7 +237,7 @@ export function PackageDetailPage({ packageId }: { packageId: string }) {
         {completedSessions.length === 0 ? <EmptyState>Nenhuma sessão realizada ainda.</EmptyState> : <div className="divide-y divide-rose-50">{completedSessions.map((item) => <div key={text(item, "id")} className="flex items-center justify-between gap-3 py-3"><span className="text-sm">{formatDate(appointmentDate(item))}</span><span className="text-xs text-muted">{formatTime(item)}</span></div>)}</div>}
       </Panel>
       <Panel title="Próximos agendamentos" subtitle={`${nextAppointments.length} sessões marcadas`}>
-        {nextAppointments.length === 0 ? <EmptyState>Nenhum próximo agendamento.</EmptyState> : <div className="divide-y divide-rose-50">{nextAppointments.map((item) => <div key={text(item, "id")} className="flex items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{formatDate(appointmentDate(item))} · {formatTime(item)}</p><p className="mt-1 text-xs text-muted">{statusLabel(text(item, "status"))}</p></div><Link href={`/agenda/${text(item, "id")}/editar`} className="text-xs font-semibold text-rose-700">Editar</Link></div>)}</div>}
+        {nextAppointments.length === 0 ? <EmptyState>Nenhum próximo agendamento.</EmptyState> : <div className="divide-y divide-rose-50">{nextAppointments.map((item) => <div key={text(item, "id")} className="flex items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{formatDate(appointmentDate(item))} · {formatTime(item)}</p><p className="mt-1 text-xs text-muted">{statusLabel(text(item, "status"))}</p></div><Link href={`/agenda/${text(item, "id")}/editar`} aria-disabled={!temAcesso} tabIndex={temAcesso ? undefined : -1} onClick={(event) => { if (!temAcesso) event.preventDefault(); }} title={!temAcesso ? "Disponível ao ativar o plano" : undefined} className={`text-xs font-semibold text-rose-700 ${!temAcesso ? "cursor-not-allowed opacity-50" : ""}`}>Editar</Link></div>)}</div>}
       </Panel>
       <Panel title="Paciente" subtitle="Acesso ao cadastro completo">
         <div className="flex items-center justify-between gap-3"><div><p className="text-sm font-semibold">{text(patient ?? {}, "nome")}</p><p className="mt-1 text-xs text-muted">{text(patient ?? {}, "whatsapp")}</p></div><Link href={`/pacientes/${text(patient ?? {}, "id")}`} className="text-xs font-semibold text-rose-700">Ver detalhe</Link></div>

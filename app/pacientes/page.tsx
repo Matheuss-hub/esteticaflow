@@ -7,6 +7,8 @@ import { ErrorNotice, PageHeading, Panel, EmptyState } from "@/components/ui";
 import { appointmentDate, dateOnly, formatDate, Row, text, whatsappLink } from "@/lib/data";
 import { mensagemReativacao } from "@/lib/mensagens";
 import { loadPatientsPageData } from "@/app/actions/clinic-data";
+import { AccessLink } from "@/components/access-link";
+import { WhatsAppConsentLink } from "@/components/whatsapp-consent-link";
 
 function lastVisitFor(patient: Row, appointments: Row[]): Date | null {
   const stored = dateOnly(text(patient, "ultima_visita", "ultima_visita_em", "last_visit"));
@@ -29,6 +31,7 @@ export default function PatientsPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [temAcesso, setTemAcesso] = useState(false);
 
   async function load() {
     try {
@@ -37,6 +40,7 @@ export default function PatientsPage() {
       else {
         setPatients(result.patients as Row[]);
         setAppointments(result.appointments as Row[]);
+        setTemAcesso(result.temAcesso);
         setError("");
       }
     } catch {
@@ -64,12 +68,12 @@ export default function PatientsPage() {
   return (
     <>
       <PageHeading eyebrow="Relacionamentos que florescem" title="Pacientes" description="Um espaço especial para cada pessoa que confia no seu cuidado."
-        action={<Link href="/pacientes/novo" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><Plus size={16} /> Novo paciente</Link>} />
+        action={<AccessLink href="/pacientes/novo" disabled={!temAcesso} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><Plus size={16} /> Novo paciente</AccessLink>} />
       {error && <div className="mb-5"><ErrorNotice message={error} /></div>}
 
       <div className="mb-6 grid gap-5 xl:grid-cols-[0.8fr_1.2fr]">
         <Panel title="Cadastro completo" subtitle="Organize contato, preferências e informações de atendimento">
-          <Link href="/pacientes/novo" className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-50"><Plus size={16} /> Abrir cadastro</Link>
+          <AccessLink href="/pacientes/novo" disabled={!temAcesso} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 px-4 py-3 text-sm font-semibold text-rose-700 hover:bg-rose-50"><Plus size={16} /> Abrir cadastro</AccessLink>
         </Panel>
 
         <Panel
@@ -91,7 +95,7 @@ export default function PatientsPage() {
                   <div key={text(patient, "id")} className="flex items-center gap-3 py-3">
                     <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-50 text-sm font-semibold text-amber-700">{patientName.slice(0, 1).toUpperCase()}</span>
                     <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{patientName}</p><p className="mt-0.5 text-[11px] text-muted">Última visita: {formatDate(lastVisit)}</p></div>
-                    {phone && <a href={whatsappLink(phone, mensagemReativacao(patientName))} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"><MessageCircle size={14} /> <span className="hidden sm:inline">Enviar no Zap</span></a>}
+                    {phone && <WhatsAppConsentLink href={whatsappLink(phone, mensagemReativacao(patientName))} authorized={patient.consentimento_whatsapp === true} label={`Enviar mensagem para ${patientName}`} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-emerald-50 px-2.5 py-2 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100"><MessageCircle size={14} /> <span className="hidden sm:inline">Enviar no Zap</span></WhatsAppConsentLink>}
                   </div>
                 );
               })}
@@ -120,12 +124,14 @@ export default function PatientsPage() {
               const patientName = text(patient, "nome", "name") || "Paciente";
               const phone = text(patient, "whatsapp", "telefone");
               return (
-                <Link href={`/pacientes/${text(patient, "id")}`} key={text(patient, "id")} className="flex items-center gap-3 py-3.5 hover:bg-rose-50/50">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-sm font-semibold text-rose-700">{patientName.slice(0, 1).toUpperCase()}</span>
-                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-semibold">{patientName}</p><p className="mt-0.5 text-xs text-muted">{phone || "Sem WhatsApp cadastrado"}</p></div>
-                  <span className="hidden text-xs text-muted sm:block">Última visita: {formatDate(lastVisitFor(patient, appointments))}</span>
-                  {phone && <a href={whatsappLink(phone, `Oi, ${patientName}! 💕 Como podemos cuidar de você hoje?`)} target="_blank" rel="noreferrer" aria-label={`Enviar mensagem para ${patientName}`} className="rounded-lg border border-rose-100 p-2 text-emerald-600 hover:bg-emerald-50"><MessageCircle size={16} /></a>}
-                </Link>
+                <div key={text(patient, "id")} className="flex items-center gap-3 py-3.5">
+                  <Link href={`/pacientes/${text(patient, "id")}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-lg hover:bg-rose-50/50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-rose-500">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-rose-100 text-sm font-semibold text-rose-700">{patientName.slice(0, 1).toUpperCase()}</span>
+                    <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{patientName}</span><span className="mt-0.5 block truncate text-xs text-muted">{phone || "Sem WhatsApp cadastrado"}</span></span>
+                    <span className="hidden text-xs text-muted sm:block">Última visita: {formatDate(lastVisitFor(patient, appointments))}</span>
+                  </Link>
+                  {phone && <WhatsAppConsentLink href={whatsappLink(phone, `Oi, ${patientName}! 💕 Como podemos cuidar de você hoje?`)} authorized={patient.consentimento_whatsapp === true} label={`Enviar mensagem para ${patientName}`} className="shrink-0 rounded-lg border border-rose-100 p-2 text-emerald-600 hover:bg-emerald-50"><MessageCircle size={16} /></WhatsAppConsentLink>}
+                </div>
               );
             })}
           </div>

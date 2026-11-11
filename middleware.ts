@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const publicPaths = ["/login", "/cadastro", "/esqueci-senha", "/redefinir-senha", "/auth/callback"];
+const publicPaths = ["/login", "/cadastro", "/esqueci-senha", "/redefinir-senha"];
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -24,10 +24,13 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser();
   const pathname = request.nextUrl.pathname;
   const isPublic = publicPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  const isAuthPath = pathname.startsWith("/auth/");
   const isOnboarding = pathname === "/onboarding";
 
+  if (request.headers.has("next-action")) return response;
+
   if (!user) {
-    if (!isPublic && !isOnboarding) {
+    if (!isPublic && !isAuthPath && !isOnboarding) {
       const url = request.nextUrl.clone();
       url.pathname = "/login";
       url.searchParams.set("next", pathname);
@@ -41,7 +44,21 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  if (isPublic && pathname !== "/auth/callback" && pathname !== "/esqueci-senha" && pathname !== "/redefinir-senha") {
+  if (
+    user.app_metadata?.precisa_trocar_senha === true
+    && pathname !== "/trocar-senha"
+    && pathname !== "/login"
+    && !isAuthPath
+  ) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/trocar-senha";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+
+  if (pathname === "/trocar-senha" || isAuthPath) return response;
+
+  if (isPublic && pathname !== "/esqueci-senha" && pathname !== "/redefinir-senha") {
     const { data: memberships } = await supabase
       .from("clinica_membros")
       .select("clinica_id")
@@ -53,7 +70,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (pathname === "/auth/callback" || pathname === "/esqueci-senha" || pathname === "/redefinir-senha") {
+  if (pathname === "/esqueci-senha" || pathname === "/redefinir-senha") {
     return response;
   }
 

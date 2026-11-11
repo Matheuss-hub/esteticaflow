@@ -13,6 +13,7 @@ import {
 } from "@/lib/data";
 import { mensagemAgendamento } from "@/lib/mensagens";
 import { EmptyState } from "@/components/ui";
+import { WhatsAppConsentLink } from "@/components/whatsapp-consent-link";
 
 const statusClass: Record<string, string> = {
   agendado: "bg-amber-50 text-amber-700",
@@ -25,16 +26,20 @@ export function AppointmentList({
   appointments,
   patientNames,
   patientPhones,
+  patientConsents,
   serviceNames,
   professionalNames,
   editable = false,
+  writeEnabled = true,
 }: {
   appointments: Row[];
   patientNames: Map<string, string>;
   patientPhones: Map<string, string>;
+  patientConsents?: Map<string, boolean>;
   serviceNames: Map<string, string>;
   professionalNames?: Map<string, string>;
   editable?: boolean;
+  writeEnabled?: boolean;
 }) {
   const sorted = useMemo(
     () => [...appointments].sort((a, b) => (appointmentDate(a)?.getTime() ?? 0) - (appointmentDate(b)?.getTime() ?? 0)),
@@ -53,6 +58,8 @@ export function AppointmentList({
         const serviceName =
           serviceNames.get(serviceId) || text(appointment, "servico_nome", "nome_servico") || "Atendimento";
         const status = text(appointment, "status").toLowerCase() || "agendado";
+        const professionalId = text(appointment, "profissional_id");
+        const professionalName = professionalNames?.get(professionalId);
         const phone = patientPhones.get(patientId) || text(appointment, "whatsapp");
         const id = text(appointment, "id") || `${patientId}-${index}`;
         const date = appointmentDate(appointment);
@@ -65,25 +72,24 @@ export function AppointmentList({
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{patientName}</p>
               <p className="mt-0.5 truncate text-xs text-muted">{serviceName}</p>
-              {professionalNames?.get(text(appointment, "profissional_id")) && <p className="mt-1 truncate text-[11px] text-muted">{professionalNames.get(text(appointment, "profissional_id"))}</p>}
+              {professionalId && <p className="mt-1 truncate text-[11px] text-muted">{professionalName || "Profissional removido"}</p>}
             </div>
             <div className="flex items-center gap-2 pl-16 sm:pl-0">
               <span className={`rounded-full px-2.5 py-1 text-[10px] font-semibold ${statusClass[status] || "bg-rose-50 text-rose-700"}`}>
                 {status.charAt(0).toUpperCase() + status.slice(1)}
               </span>
-              {phone && (
-                <a
-                  href={date ? whatsappLink(phone, mensagemAgendamento(patientName, serviceName, date)) : undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-label={`Enviar mensagem para ${patientName}`}
+              {phone && date && (
+                <WhatsAppConsentLink
+                  href={whatsappLink(phone, mensagemAgendamento(patientName, serviceName, date))}
+                  authorized={patientConsents?.get(patientId) === true}
                   className="rounded-lg border border-rose-100 p-2 text-emerald-600 transition hover:bg-emerald-50"
+                  label={`Enviar mensagem para ${patientName}`}
                 >
                   <MessageCircle size={16} />
-                </a>
+                </WhatsAppConsentLink>
               )}
             </div>
-            {editable && <AppointmentActions id={id} status={status} />}
+            {editable && <AppointmentActions id={id} status={status} writeEnabled={writeEnabled} />}
           </div>
         );
       })}
@@ -91,7 +97,7 @@ export function AppointmentList({
   );
 }
 
-function AppointmentActions({ id, status }: { id: string; status: string }) {
+function AppointmentActions({ id, status, writeEnabled }: { id: string; status: string; writeEnabled: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -112,11 +118,11 @@ function AppointmentActions({ id, status }: { id: string; status: string }) {
 
   return (
     <div className="flex flex-wrap items-center gap-1 pl-16 sm:pl-0">
-      {status === "agendado" && <button type="button" title="Confirmar" disabled={saving} onClick={() => void updateStatus("confirmado")} className="rounded-lg border border-sky-100 p-2 text-sky-700 hover:bg-sky-50"><Check size={15} /></button>}
-      {!['cancelado', 'realizado'].includes(status) && <Link href={`/agenda/${id}/editar`} title="Remarcar ou editar" className="rounded-lg border border-rose-100 p-2 text-rose-700 hover:bg-rose-50"><CalendarClock size={15} /></Link>}
-      {!['cancelado', 'realizado', 'faltou'].includes(status) && <button type="button" title="Marcar como faltou" disabled={saving} onClick={() => void updateStatus("faltou")} className="rounded-lg border border-amber-100 p-2 text-amber-700 hover:bg-amber-50"><UserRoundCheck size={15} /></button>}
-      {!['cancelado', 'realizado'].includes(status) && <button type="button" title="Marcar como realizado" disabled={saving} onClick={() => void updateStatus("realizado")} className="rounded-lg border border-emerald-100 p-2 text-emerald-700 hover:bg-emerald-50"><Check size={15} /></button>}
-      {!['cancelado', 'realizado'].includes(status) && <button type="button" title="Cancelar" disabled={saving} onClick={() => void updateStatus("cancelado")} className="rounded-lg border border-red-100 p-2 text-red-700 hover:bg-red-50"><CircleX size={15} /></button>}
+      {status === "agendado" && <button type="button" aria-disabled={!writeEnabled} title={writeEnabled ? "Confirmar" : "Disponível ao ativar o plano"} disabled={saving || !writeEnabled} onClick={() => void updateStatus("confirmado")} className="rounded-lg border border-sky-100 p-2 text-sky-700 hover:bg-sky-50 disabled:opacity-50"><Check size={15} /></button>}
+      {!['cancelado', 'realizado'].includes(status) && <Link href={`/agenda/${id}/editar`} aria-disabled={!writeEnabled} tabIndex={writeEnabled ? undefined : -1} onClick={(event) => { if (!writeEnabled) event.preventDefault(); }} title={writeEnabled ? "Remarcar ou editar" : "Disponível ao ativar o plano"} className={`rounded-lg border border-rose-100 p-2 text-rose-700 hover:bg-rose-50 ${!writeEnabled ? "cursor-not-allowed opacity-50" : ""}`}><CalendarClock size={15} /></Link>}
+      {!['cancelado', 'realizado', 'faltou'].includes(status) && <button type="button" aria-disabled={!writeEnabled} title={writeEnabled ? "Marcar como faltou" : "Disponível ao ativar o plano"} disabled={saving || !writeEnabled} onClick={() => void updateStatus("faltou")} className="rounded-lg border border-amber-100 p-2 text-amber-700 hover:bg-amber-50 disabled:opacity-50"><UserRoundCheck size={15} /></button>}
+      {!['cancelado', 'realizado'].includes(status) && <button type="button" aria-disabled={!writeEnabled} title={writeEnabled ? "Marcar como realizado" : "Disponível ao ativar o plano"} disabled={saving || !writeEnabled} onClick={() => void updateStatus("realizado")} className="rounded-lg border border-emerald-100 p-2 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"><Check size={15} /></button>}
+      {!['cancelado', 'realizado'].includes(status) && <button type="button" aria-disabled={!writeEnabled} title={writeEnabled ? "Cancelar" : "Disponível ao ativar o plano"} disabled={saving || !writeEnabled} onClick={() => void updateStatus("cancelado")} className="rounded-lg border border-red-100 p-2 text-red-700 hover:bg-red-50 disabled:opacity-50"><CircleX size={15} /></button>}
       {error && <span role="alert" className="basis-full text-xs text-red-700">{error}</span>}
     </div>
   );

@@ -25,6 +25,13 @@ export async function GET(request: NextRequest) {
     },
   });
   const { error } = await supabase.auth.exchangeCodeForSession(code);
-  if (error) return NextResponse.redirect(new URL("/login?erro=link", request.url));
+  if (error) {
+    console.error("Falha ao validar retorno de autenticação:", {
+      code: error.code,
+      status: error.status,
+      message: error.message.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[e-mail]"),
+    });
+    return NextResponse.redirect(new URL("/login?erro=link", request.url));
+  }
   return response;
 }

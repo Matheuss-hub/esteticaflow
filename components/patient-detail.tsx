@@ -9,8 +9,9 @@ import { EmptyState, ErrorNotice, PageHeading, Panel } from "@/components/ui";
 import { appointmentDate, formatDate, formatTime, Row, statusLabel, text } from "@/lib/data";
 import { mensagemAgendamento } from "@/lib/mensagens";
 import { whatsappLink } from "@/lib/data";
+import { WhatsAppConsentLink } from "@/components/whatsapp-consent-link";
 
-type PatientData = { patient: Row; appointments: Row[]; packages: Row[]; services: Row[] };
+type PatientData = { patient: Row; appointments: Row[]; packages: Row[]; services: Row[]; temAcesso: boolean };
 
 function usePatient(patientId: string) {
   const [data, setData] = useState<PatientData | null>(null);
@@ -33,7 +34,7 @@ export function PatientEditPage({ patientId }: { patientId: string }) {
   const { data, error, loading } = usePatient(patientId);
   if (loading) return <p className="py-10 text-center text-sm text-muted">Carregando paciente...</p>;
   if (error || !data) return <ErrorNotice message={error || "Paciente não encontrada."} />;
-  return <PatientForm patient={data.patient} />;
+  return <PatientForm patient={data.patient} canWrite={data.temAcesso} />;
 }
 
 export function PatientDetailPage({ patientId }: { patientId: string }) {
@@ -57,10 +58,10 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
       <PageHeading eyebrow="Ficha da paciente" title={name} description={phone || "Sem WhatsApp cadastrado"}
         action={<div className="flex flex-wrap gap-2">
           <Link href="/pacientes" className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold"><ArrowLeft size={16} /> Voltar</Link>
-          <Link href={`/pacientes/${patientId}/editar`} className="inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold"><Pencil size={15} /> Editar</Link>
-          <Link href={`/agenda/novo?paciente_id=${patientId}`} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white"><CalendarPlus size={16} /> Agendar</Link>
-          <Link href={`/pacotes/novo?paciente_id=${patientId}`} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700"><PackagePlus size={16} /> Novo pacote</Link>
-          {phone && <a href={whatsappLink(phone, `Oi, ${name}! Como podemos cuidar de você hoje?`)} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white"><MessageCircle size={16} /> Enviar no Zap</a>}
+          <Link href={`/pacientes/${patientId}/editar`} aria-disabled={!data.temAcesso} tabIndex={data.temAcesso ? undefined : -1} onClick={(event) => { if (!data.temAcesso) event.preventDefault(); }} title={!data.temAcesso ? "Disponível ao ativar o plano" : undefined} className={`inline-flex items-center gap-2 rounded-xl border border-rose-100 bg-white px-3 py-2.5 text-sm font-semibold ${!data.temAcesso ? "cursor-not-allowed opacity-50" : ""}`}><Pencil size={15} /> Editar</Link>
+          <Link href={`/agenda/novo?paciente_id=${patientId}`} aria-disabled={!data.temAcesso} tabIndex={data.temAcesso ? undefined : -1} onClick={(event) => { if (!data.temAcesso) event.preventDefault(); }} title={!data.temAcesso ? "Disponível ao ativar o plano" : undefined} className={`inline-flex items-center gap-2 rounded-xl bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white ${!data.temAcesso ? "cursor-not-allowed opacity-50" : ""}`}><CalendarPlus size={16} /> Agendar</Link>
+          <Link href={`/pacotes/novo?paciente_id=${patientId}`} aria-disabled={!data.temAcesso} tabIndex={data.temAcesso ? undefined : -1} onClick={(event) => { if (!data.temAcesso) event.preventDefault(); }} title={!data.temAcesso ? "Disponível ao ativar o plano" : undefined} className={`inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2.5 text-sm font-semibold text-rose-700 ${!data.temAcesso ? "cursor-not-allowed opacity-50" : ""}`}><PackagePlus size={16} /> Novo pacote</Link>
+          {phone && <WhatsAppConsentLink href={whatsappLink(phone, `Oi, ${name}! Como podemos cuidar de você hoje?`)} authorized={patient.consentimento_whatsapp === true} label={`Enviar mensagem para ${name}`} className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white"><MessageCircle size={16} /> Enviar no Zap</WhatsAppConsentLink>}
         </div>} />
 
       <div className="grid gap-5 xl:grid-cols-2">
@@ -96,7 +97,7 @@ export function PatientDetailPage({ patientId }: { patientId: string }) {
             const service = serviceNames.get(text(item, "servico_id")) || "Atendimento";
             return <div key={text(item, "id")} className="flex items-center justify-between gap-3 py-3"><div><p className="text-sm font-medium">{service}</p><p className="mt-1 text-xs text-muted">{formatDate(date)} · {formatTime(item)}</p></div><span className="rounded-full bg-rose-50 px-2.5 py-1 text-[10px] font-semibold">{statusLabel(text(item, "status"))}</span></div>;
           })}</div>}
-          {nextAppointment && <Link href={`/agenda/${text(nextAppointment, "id")}/editar`} className="mt-3 inline-flex text-xs font-semibold text-rose-700">Abrir próximo agendamento</Link>}
+          {nextAppointment && <Link href={`/agenda/${text(nextAppointment, "id")}/editar`} aria-disabled={!data.temAcesso} tabIndex={data.temAcesso ? undefined : -1} onClick={(event) => { if (!data.temAcesso) event.preventDefault(); }} title={!data.temAcesso ? "Disponível ao ativar o plano" : undefined} className={`mt-3 inline-flex text-xs font-semibold text-rose-700 ${!data.temAcesso ? "cursor-not-allowed opacity-50" : ""}`}>Abrir próximo agendamento</Link>}
         </Panel>
       </div>
     </>

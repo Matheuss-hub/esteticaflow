@@ -8,6 +8,7 @@ import { AppointmentList } from "@/components/appointment-list";
 import { ErrorNotice, PageHeading, Panel } from "@/components/ui";
 import { appointmentDate, dateKey, dateOnly, formatDateLong, Row, text } from "@/lib/data";
 import { loadAgendaData } from "@/app/actions/data";
+import { AccessLink } from "@/components/access-link";
 
 export default function AgendaPage() {
   const [appointments, setAppointments] = useState<Row[]>([]);
@@ -18,6 +19,7 @@ export default function AgendaPage() {
   const [professionalFilter, setProfessionalFilter] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [temAcesso, setTemAcesso] = useState(false);
 
   useEffect(() => {
     async function load() {
@@ -29,6 +31,7 @@ export default function AgendaPage() {
           setPatients(result.patients as Row[]);
           setServices(result.services as Row[]);
           setMembers(result.members as Row[]);
+          setTemAcesso(result.temAcesso);
         }
       } catch {
         setError("Não foi possível carregar a agenda. Tente novamente.");
@@ -40,6 +43,7 @@ export default function AgendaPage() {
 
   const patientsById = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "nome", "name")])), [patients]);
   const phonesById = useMemo(() => new Map(patients.map((item) => [text(item, "id"), text(item, "whatsapp", "telefone")])), [patients]);
+  const consentsById = useMemo(() => new Map(patients.map((item) => [text(item, "id"), item.consentimento_whatsapp === true])), [patients]);
   const servicesById = useMemo(() => new Map(services.map((item) => [text(item, "id"), text(item, "nome", "name")])), [services]);
   const professionalNames = useMemo(() => new Map(members.map((member) => [text(member, "user_id"), text(member, "nome") || "Membro"])), [members]);
   const dayAppointments = appointments.filter((item) => {
@@ -64,7 +68,7 @@ export default function AgendaPage() {
             <span className="sr-only">Selecionar data</span>
             <input aria-label="Selecionar data da agenda" type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} className="bg-transparent text-sm outline-none" />
           </label>
-          <Link href="/agenda/novo" className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><CalendarPlus size={16} /> Novo agendamento</Link>
+          <AccessLink href="/agenda/novo" disabled={!temAcesso} className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-rose-700"><CalendarPlus size={16} /> Novo agendamento</AccessLink>
         </div>}
       />
       {error && <div className="mb-5"><ErrorNotice message={error} /></div>}
@@ -83,7 +87,7 @@ export default function AgendaPage() {
         {loading && !error ? (
           <p className="py-8 text-center text-sm text-muted">Carregando agenda...</p>
         ) : (
-          <AppointmentList appointments={dayAppointments} patientNames={patientsById} patientPhones={phonesById} serviceNames={servicesById} professionalNames={professionalNames} editable />
+          <AppointmentList appointments={dayAppointments} patientNames={patientsById} patientPhones={phonesById} patientConsents={consentsById} serviceNames={servicesById} professionalNames={professionalNames} editable writeEnabled={temAcesso} />
         )}
       </Panel>
       <p className="mt-4 text-xs text-muted">Os horários consideram o fuso de São Paulo. Ao marcar como realizado, sessões do pacote são atualizadas automaticamente.</p>

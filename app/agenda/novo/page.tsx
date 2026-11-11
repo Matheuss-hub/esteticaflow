@@ -1,5 +1,17 @@
 import { AppointmentForm } from "@/components/appointment-form";
 
-export default function NewAppointmentPage({ searchParams }: { searchParams: { paciente_id?: string; servico_id?: string; pacote_id?: string } }) {
-  return <AppointmentForm initialPatientId={searchParams.paciente_id ?? ""} initialServiceId={searchParams.servico_id ?? ""} initialPackageId={searchParams.pacote_id ?? ""} />;
+type SearchValue = string | string[] | undefined;
+
+function firstValue(value: SearchValue): string {
+  return Array.isArray(value) ? value[0] ?? "" : value ?? "";
+}
+
+export default function NewAppointmentPage({ searchParams }: { searchParams: { paciente_id?: SearchValue; servico_id?: SearchValue; pacote_id?: SearchValue } }) {
+  return (
+    <AppointmentForm
+      initialPatientId={firstValue(searchParams.paciente_id)}
+      initialServiceId={firstValue(searchParams.servico_id)}
+      initialPackageId={firstValue(searchParams.pacote_id)}
+    />
+  );
 }

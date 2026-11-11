@@ -1,12 +1,27 @@
 "use server";
 
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { getClinicaAtual } from "@/lib/clinica";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
-const baseUrl = () => (process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000").replace(/\/$/, "");
+function baseUrl(): string | null {
+  const configured = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!configured) return process.env.NODE_ENV === "production" ? null : "http://localhost:3000";
+  try {
+    const url = new URL(configured);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    if (process.env.NODE_ENV === "production" && (
+      url.protocol !== "https:"
+      || ["localhost", "127.0.0.1", "::1"].includes(url.hostname)
+    )) return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
 type ActionResult = { error?: string; success?: string; redirectTo?: string };
 
 const credentialsSchema = z.object({
@@ -47,6 +62,8 @@ export async function signupAction(formData: FormData): Promise<ActionResult> {
     confirmar_senha: formData.get("confirmar_senha"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
+  const siteUrl = baseUrl();
+  if (!siteUrl) return { error: "O cadastro está temporariamente indisponível. Tente novamente mais tarde." };
 
   let admin;
   try {
@@ -61,7 +78,7 @@ export async function signupAction(formData: FormData): Promise<ActionResult> {
     password: parsed.data.senha,
     options: {
       data: { nome: parsed.data.nome },
-      emailRedirectTo: `${baseUrl()}/auth/callback?next=/`,
+      emailRedirectTo: `${siteUrl}/auth/callback?next=/`,
     },
   });
   if (error || !data.user) {
@@ -85,12 +102,30 @@ export async function signupAction(formData: FormData): Promise<ActionResult> {
     : { redirectTo: `/cadastro?confirmacao=${encodeURIComponent(parsed.data.email)}` };
 }
 
+export async function resendSignupConfirmationAction(input: unknown): Promise<ActionResult> {
+  const parsed = z.string().trim().email("Informe um e-mail válido.").safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Informe um e-mail válido." };
+  const siteUrl = baseUrl();
+  if (!siteUrl) return { error: "Não foi possível solicitar um novo link agora. Tente novamente mais tarde." };
+
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase.auth.resend({
+    type: "signup",
+    email: parsed.data,
+    options: { emailRedirectTo: `${siteUrl}/auth/confirm` },
+  });
+  if (error) return { error: "Não foi possível reenviar o link agora. Confira o endereço e tente novamente." };
+  return { success: "Se a conta ainda precisar de confirmação, enviaremos um novo link para o e-mail informado." };
+}
+
 export async function requestPasswordResetAction(formData: FormData): Promise<ActionResult> {
   const parsed = z.string().trim().email("Informe um e-mail válido.").safeParse(formData.get("email"));
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Informe um e-mail válido." };
+  const siteUrl = baseUrl();
+  if (!siteUrl) return { error: "A redefinição de senha está temporariamente indisponível. Tente novamente mais tarde." };
   const supabase = createSupabaseServerClient();
   const { error } = await supabase.auth.resetPasswordForEmail(parsed.data, {
-    redirectTo: `${baseUrl()}/auth/callback?next=/redefinir-senha`,
+    redirectTo: `${siteUrl}/auth/callback?next=/redefinir-senha`,
   });
   if (error) return { error: "Não foi possível enviar o e-mail agora. Tente novamente." };
   return { success: "Se o e-mail estiver cadastrado, enviaremos um link para redefinir sua senha." };
@@ -113,16 +148,67 @@ export async function updatePasswordAction(formData: FormData): Promise<ActionRe
   return { redirectTo: "/" };
 }
 
-export async function signOutAction() {
+export async function updateRequiredPasswordAction(formData: FormData): Promise<ActionResult> {
+  const parsed = z.object({
+    senha: z.string().min(8, "A nova senha deve ter pelo menos 8 caracteres."),
+    confirmar_senha: z.string(),
+  }).refine((values) => values.senha === values.confirmar_senha, {
+    message: "As senhas não conferem.",
+    path: ["confirmar_senha"],
+  }).safeParse({ senha: formData.get("senha"), confirmar_senha: formData.get("confirmar_senha") });
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
+
+  const supabase = createSupabaseServerClient();
+  const { data: { user }, error: userError } = await supabase.auth.getUser();
+  if (userError || !user) return { redirectTo: "/login" };
+  if (user.app_metadata?.precisa_trocar_senha !== true) return { redirectTo: "/" };
+
+  const { error: passwordError } = await supabase.auth.updateUser({ password: parsed.data.senha });
+  if (passwordError) return { error: "Não foi possível atualizar a senha. Tente novamente." };
+
+  let admin;
+  try {
+    admin = createSupabaseAdminClient();
+  } catch {
+    return { error: "A senha foi atualizada, mas não foi possível concluir a configuração. Tente novamente mais tarde." };
+  }
+  const { error: metadataError } = await admin.auth.admin.updateUserById(user.id, {
+    app_metadata: { precisa_trocar_senha: false },
+  });
+  if (metadataError) {
+    return { error: "A senha foi atualizada, mas não foi possível concluir a configuração. Tente novamente." };
+  }
+
+  const { error: refreshError } = await supabase.auth.refreshSession();
+  if (refreshError) return { error: "Senha atualizada. Entre novamente para continuar." };
+  return { redirectTo: "/" };
+}
+
+export async function logoutFromMenuAction() {
   const supabase = createSupabaseServerClient();
   await supabase.auth.signOut();
   cookies().delete("esteticaflow_clinica_id");
-  return { redirectTo: "/login" };
+  redirect("/login");
 }
 
 export async function getAuthContextAction() {
   try {
-    return await getClinicaAtual();
+    const context = await getClinicaAtual();
+    if (!context) return null;
+    return {
+      userNome: context.userNome,
+      fotoUrl: context.fotoUrl,
+      role: context.role,
+      clinicaNome: context.clinicaNome,
+      clinicaId: context.clinicaId,
+      clinicaLogoUrl: context.clinicaLogoUrl,
+      assinatura: context.assinatura,
+      tourConcluido: context.tourConcluido,
+      checklistOculto: context.checklistOculto,
+      trialInicio: context.assinatura.trialInicio,
+      trialFim: context.assinatura.trialFim,
+      clinicas: context.clinicas.map(({ clinicaId, clinicaNome }) => ({ clinicaId, clinicaNome })),
+    };
   } catch {
     return null;
   }
@@ -171,7 +257,7 @@ export async function createOnboardingClinicAction(formData: FormData): Promise<
   } catch {
     return { error: "Não foi possível criar a clínica agora. Tente novamente mais tarde." };
   }
-  const name = typeof user.user_metadata?.nome === "string" ? user.user_metadata.nome : user.email;
+  const name = typeof user.user_metadata?.nome === "string" ? user.user_metadata.nome : "Responsável";
   const { data: clinicId, error } = await admin.rpc("criar_clinica_inicial", {
     p_user_id: user.id,
     p_nome: parsed.data.nome_clinica,
