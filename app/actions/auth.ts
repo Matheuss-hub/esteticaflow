@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { logActionFailure } from "@/lib/action-diagnostics";
 import { getClinicaAtual } from "@/lib/clinica";
 import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
@@ -62,38 +63,72 @@ export async function signupAction(formData: FormData): Promise<ActionResult> {
     confirmar_senha: formData.get("confirmar_senha"),
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Confira os dados informados." };
+  const logSignupFailure = (step: string, error: unknown) => logActionFailure(
+    "cadastro",
+    step,
+    error,
+    [parsed.data.email, parsed.data.senha, parsed.data.confirmar_senha],
+  );
   const siteUrl = baseUrl();
-  if (!siteUrl) return { error: "O cadastro está temporariamente indisponível. Tente novamente mais tarde." };
+  if (!siteUrl) {
+    logSignupFailure("validar_url_site", new Error("NEXT_PUBLIC_SITE_URL ausente ou inválida"));
+    return { error: "O cadastro está temporariamente indisponível. Tente novamente mais tarde." };
+  }
 
   let admin;
   try {
     admin = createSupabaseAdminClient();
-  } catch {
+  } catch (error) {
+    logSignupFailure("criar_cliente_admin", error);
     return { error: "O cadastro está temporariamente indisponível. Configure a chave de serviço no servidor." };
   }
 
-  const supabase = createSupabaseServerClient();
-  const { data, error } = await supabase.auth.signUp({
-    email: parsed.data.email,
-    password: parsed.data.senha,
-    options: {
-      data: { nome: parsed.data.nome },
-      emailRedirectTo: `${siteUrl}/auth/callback?next=/`,
-    },
-  });
+  let supabase;
+  try {
+    supabase = createSupabaseServerClient();
+  } catch (error) {
+    logSignupFailure("criar_cliente_servidor", error);
+    throw error;
+  }
+
+  let data;
+  let error;
+  try {
+    ({ data, error } = await supabase.auth.signUp({
+      email: parsed.data.email,
+      password: parsed.data.senha,
+      options: {
+        data: { nome: parsed.data.nome },
+        emailRedirectTo: `${siteUrl}/auth/callback?next=/`,
+      },
+    }));
+  } catch (error) {
+    logSignupFailure("criar_conta", error);
+    throw error;
+  }
   if (error || !data.user) {
+    logSignupFailure("criar_conta", error ?? new Error("Supabase não retornou o usuário"));
     return { error: error?.message.includes("already registered") ? "Este e-mail já possui cadastro." : "Não foi possível criar sua conta. Confira o e-mail e tente novamente." };
   }
 
-  const { error: clinicError } = await admin.rpc("criar_clinica_inicial", {
-    p_user_id: data.user.id,
-    p_nome: parsed.data.nome_clinica,
-    p_email_dono: parsed.data.email,
-    p_nome_dona: parsed.data.nome,
-  });
+  let clinicError;
+  try {
+    ({ error: clinicError } = await admin.rpc("criar_clinica_inicial", {
+      p_user_id: data.user.id,
+      p_nome: parsed.data.nome_clinica,
+      p_email_dono: parsed.data.email,
+      p_nome_dona: parsed.data.nome,
+    }));
+  } catch (error) {
+    logSignupFailure("criar_clinica_inicial", error);
+    throw error;
+  }
   if (clinicError) {
-    await admin.auth.admin.deleteUser(data.user.id);
-    await supabase.auth.signOut();
+    logSignupFailure("criar_clinica_inicial", clinicError);
+    const { error: deleteError } = await admin.auth.admin.deleteUser(data.user.id);
+    if (deleteError) logSignupFailure("remover_usuario_apos_falha", deleteError);
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) logSignupFailure("encerrar_sessao_apos_falha", signOutError);
     return { error: "Não foi possível criar a clínica. Nenhum cadastro foi mantido; tente novamente." };
   }
 
@@ -241,30 +276,61 @@ const onboardingSchema = z.object({ nome_clinica: z.string().trim().min(2, "Info
 export async function createOnboardingClinicAction(formData: FormData): Promise<ActionResult> {
   const parsed = onboardingSchema.safeParse({ nome_clinica: formData.get("nome_clinica") });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Informe o nome da clínica." };
-  const supabase = createSupabaseServerClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  let supabase;
+  try {
+    supabase = createSupabaseServerClient();
+  } catch (error) {
+    logActionFailure("onboarding", "criar_cliente_servidor", error);
+    throw error;
+  }
+  let user;
+  try {
+    ({ data: { user } } = await supabase.auth.getUser());
+  } catch (error) {
+    logActionFailure("onboarding", "obter_usuario_atual", error);
+    throw error;
+  }
   if (!user?.email) return { redirectTo: "/login" };
-  const { data: existing } = await supabase
-    .from("clinica_membros")
-    .select("clinica_id")
-    .eq("user_id", user.id)
-    .limit(1);
+  let existing;
+  let membershipError;
+  try {
+    ({ data: existing, error: membershipError } = await supabase
+      .from("clinica_membros")
+      .select("clinica_id")
+      .eq("user_id", user.id)
+      .limit(1));
+  } catch (error) {
+    logActionFailure("onboarding", "verificar_vinculo_clinica", error);
+    throw error;
+  }
+  if (membershipError) logActionFailure("onboarding", "verificar_vinculo_clinica", membershipError);
   if (existing?.length) return { redirectTo: "/" };
 
   let admin;
   try {
     admin = createSupabaseAdminClient();
-  } catch {
+  } catch (error) {
+    logActionFailure("onboarding", "criar_cliente_admin", error);
     return { error: "Não foi possível criar a clínica agora. Tente novamente mais tarde." };
   }
   const name = typeof user.user_metadata?.nome === "string" ? user.user_metadata.nome : "Responsável";
-  const { data: clinicId, error } = await admin.rpc("criar_clinica_inicial", {
-    p_user_id: user.id,
-    p_nome: parsed.data.nome_clinica,
-    p_email_dono: user.email,
-    p_nome_dona: name,
-  });
-  if (error || !clinicId) return { error: "Não foi possível criar a clínica. Confira os dados e tente novamente." };
+  let clinicId;
+  let error;
+  try {
+    ({ data: clinicId, error } = await admin.rpc("criar_clinica_inicial", {
+      p_user_id: user.id,
+      p_nome: parsed.data.nome_clinica,
+      p_email_dono: user.email,
+      p_nome_dona: name,
+    }));
+  } catch (error) {
+    logActionFailure("onboarding", "criar_clinica_inicial", error);
+    throw error;
+  }
+  if (error || !clinicId) {
+    logActionFailure("onboarding", "criar_clinica_inicial", error ?? new Error("RPC não retornou o identificador da clínica"));
+    return { error: "Não foi possível criar a clínica. Confira os dados e tente novamente." };
+  }
   cookies().set("esteticaflow_clinica_id", clinicId, {
     httpOnly: true,
     sameSite: "lax",

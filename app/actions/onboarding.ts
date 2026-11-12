@@ -1,6 +1,7 @@
 "use server";
 
 import { z } from "zod";
+import { logActionFailure } from "@/lib/action-diagnostics";
 import { getClinicaAtual } from "@/lib/clinica";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -16,17 +17,33 @@ export async function atualizarMeuOnboarding(input: unknown): Promise<{ error?: 
   let clinic;
   try {
     clinic = await getClinicaAtual();
-  } catch {
+  } catch (error) {
+    logActionFailure("onboarding", "obter_clinica_atual", error);
     return { error: "Não foi possível validar sua clínica. Tente novamente." };
   }
   if (!clinic) return { error: "Sua conta ainda não está vinculada a uma clínica." };
 
-  const supabase = createSupabaseServerClient();
-  const { error } = await supabase.rpc("atualizar_meu_onboarding", {
-    p_clinica_id: clinic.clinicaId,
-    p_tour_concluido: parsed.data.tourConcluido,
-    p_checklist_oculto: parsed.data.checklistOculto,
-  });
-  if (error) return { error: "Não foi possível salvar essa alteração. Tente novamente." };
+  let supabase;
+  try {
+    supabase = createSupabaseServerClient();
+  } catch (error) {
+    logActionFailure("onboarding", "criar_cliente_servidor", error);
+    throw error;
+  }
+  let error;
+  try {
+    ({ error } = await supabase.rpc("atualizar_meu_onboarding", {
+      p_clinica_id: clinic.clinicaId,
+      p_tour_concluido: parsed.data.tourConcluido,
+      p_checklist_oculto: parsed.data.checklistOculto,
+    }));
+  } catch (error) {
+    logActionFailure("onboarding", "atualizar_meu_onboarding", error);
+    throw error;
+  }
+  if (error) {
+    logActionFailure("onboarding", "atualizar_meu_onboarding", error);
+    return { error: "Não foi possível salvar essa alteração. Tente novamente." };
+  }
   return { success: true };
 }
